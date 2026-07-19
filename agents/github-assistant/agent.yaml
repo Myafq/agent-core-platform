@@ -5,8 +5,7 @@ metadata:
   name: github-assistant
   description: A terminal assistant that will gain read-only GitHub tools.
   tags:
-    project: agentcore-yaml-lab
-    managed-by: terraform
+    Project: agentcore-yaml-lab
 
 spec:
   engine:

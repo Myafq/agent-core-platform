@@ -1,10 +1,18 @@
 locals {
-  harness_name = replace(var.name, "-", "_")
+  harness_name       = replace(var.name, "-", "_")
+  foundation_model   = "arn:${data.aws_partition.current.partition}:bedrock:${data.aws_region.current.name}::foundation-model/${var.model_id}"
+  harness_memory_arn = "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:memory/harness_${local.harness_name}_*"
   common_tags = merge(var.tags, {
     Agent       = var.name
     Description = var.description
   })
 }
+
+data "aws_caller_identity" "current" {}
+
+data "aws_partition" "current" {}
+
+data "aws_region" "current" {}
 
 data "aws_iam_policy_document" "assume_role" {
   statement {
@@ -26,6 +34,119 @@ data "aws_iam_policy_document" "execution" {
       "bedrock:InvokeModelWithResponseStream",
     ]
     resources = ["*"]
+  }
+
+  # Harness uses a managed public runtime image for every session.
+  statement {
+    sid       = "EcrPublicTokenAccess"
+    actions   = ["ecr-public:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "StsForEcrPublicPull"
+    actions   = ["sts:GetServiceBearerToken"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid = "XRayTracingAccess"
+    actions = [
+      "xray:PutTraceSegments",
+      "xray:PutTelemetryRecords",
+      "xray:GetSamplingRules",
+      "xray:GetSamplingTargets",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid = "CloudWatchLogsGroup"
+    actions = [
+      "logs:CreateLogGroup",
+      "logs:DescribeLogStreams",
+    ]
+    resources = ["arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/bedrock-agentcore/runtimes/*"]
+  }
+
+  statement {
+    sid       = "CloudWatchLogsDescribeGroups"
+    actions   = ["logs:DescribeLogGroups"]
+    resources = ["arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:*"]
+  }
+
+  statement {
+    sid = "CloudWatchLogsStream"
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+    ]
+    resources = ["arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/bedrock-agentcore/runtimes/*:log-stream:*"]
+  }
+
+  statement {
+    sid       = "CloudWatchMetricsPublish"
+    actions   = ["cloudwatch:PutMetricData"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "cloudwatch:namespace"
+      values   = ["bedrock-agentcore"]
+    }
+  }
+
+  # Every Harness owns a managed memory resource for session history.
+  statement {
+    sid = "HarnessManagedMemory"
+    actions = [
+      "bedrock-agentcore:CreateEvent",
+      "bedrock-agentcore:DeleteEvent",
+      "bedrock-agentcore:GetEvent",
+      "bedrock-agentcore:ListEvents",
+      "bedrock-agentcore:RetrieveMemoryRecords",
+    ]
+    resources = [local.harness_memory_arn]
+  }
+
+  # Default AgentCore tools and workload identity are available for future YAML
+  # tool declarations. Gateway, OAuth, S3, and Git access remain opt-in.
+  statement {
+    sid = "AgentCoreWorkloadIdentity"
+    actions = [
+      "bedrock-agentcore:GetWorkloadAccessToken",
+      "bedrock-agentcore:GetWorkloadAccessTokenForJWT",
+    ]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:workload-identity-directory/default",
+      "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:workload-identity-directory/default/workload-identity/harness_${local.harness_name}-*",
+    ]
+  }
+
+  statement {
+    sid = "AgentCoreBrowserDefault"
+    actions = [
+      "bedrock-agentcore:StartBrowserSession",
+      "bedrock-agentcore:StopBrowserSession",
+      "bedrock-agentcore:GetBrowserSession",
+      "bedrock-agentcore:ListBrowserSessions",
+      "bedrock-agentcore:UpdateBrowserStream",
+      "bedrock-agentcore:ConnectBrowserAutomationStream",
+      "bedrock-agentcore:ConnectBrowserLiveViewStream",
+    ]
+    resources = ["arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.name}:aws:browser/*"]
+  }
+
+  statement {
+    sid = "AgentCoreCodeInterpreterDefault"
+    actions = [
+      "bedrock-agentcore:StartCodeInterpreterSession",
+      "bedrock-agentcore:StopCodeInterpreterSession",
+      "bedrock-agentcore:GetCodeInterpreterSession",
+      "bedrock-agentcore:ListCodeInterpreterSessions",
+      "bedrock-agentcore:InvokeCodeInterpreter",
+    ]
+    resources = ["arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.name}:aws:code-interpreter/*"]
   }
 }
 

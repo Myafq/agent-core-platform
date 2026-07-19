@@ -80,6 +80,11 @@ Clients own presentation and protocol behavior. The local CLI signs requests wit
 the developer's AWS credentials, provides stable user/session identifiers, and
 renders streamed Harness events. It does not own agent prompts or infrastructure.
 
+The optional Telegram adapter is a locally run long-polling client. It accepts
+private text messages, maps each chat to a stable Harness session, and renders
+the completed streamed reply as Telegram-sized messages. It never configures a
+webhook or exposes public ingress.
+
 ## Runtime choice
 
 Harness is the default because the desired abstraction is declarative: model,
@@ -134,8 +139,12 @@ Environment overlays must not silently override security-sensitive agent intent.
   defects; keep deployment evidence separate from static validation.
 - End-to-end Harness → Gateway → Identity user binding must be proven before the
   GitHub schema is stabilized.
-- The current Bedrock IAM policy uses `Resource = "*"`; this is tracked for
-  hardening.
+- The Harness execution role scopes model invocation to the configured foundation
+  model and memory access to the Harness-owned memory ARN pattern. A small set of
+  AWS service actions still requires `Resource = "*"`; their allowed actions are
+  individually enumerated and metrics are restricted to the `bedrock-agentcore`
+  namespace. The role includes AgentCore's default Browser, Code Interpreter,
+  and workload-identity permissions; Gateway, OAuth, S3, and Git access are
+  added only with their corresponding declarative features.
 - A deny-by-default Harness tool allow-list currently uses an unmatched sentinel;
   validate that behavior against the live API during TF-001/AWS-001.
-

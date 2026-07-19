@@ -74,6 +74,23 @@ Record non-sensitive resource identifiers and the provider/tool versions in
 The invoking AWS principal needs the relevant AgentCore Harness invocation
 permissions. Never paste tokens or credentials into the chat transcript.
 
+## Run the local Telegram adapter
+
+Create a bot with Telegram's `@BotFather`, then export its token locally. Do not
+commit it or place it in YAML. Long polling cannot run while a Telegram webhook
+is configured.
+
+```shell
+export TELEGRAM_BOT_TOKEN=your-bot-token
+.venv/bin/python clients/telegram/bot.py \
+  --region "$AWS_REGION" \
+  --profile "$AWS_PROFILE" \
+  --harness-arn "$(cd live/dev/us-east-1/github-assistant && terragrunt output -raw harness_arn)"
+```
+
+The adapter handles private text chats only. Use `/new` for a new Harness
+session. Stop it with `Ctrl-C`; no Telegram or AWS resource is changed.
+
 ## Cleanup
 
 Destroy is destructive and requires explicit user authorization:
@@ -87,4 +104,3 @@ terragrunt destroy
 After cleanup, verify the Harness and IAM role are gone and update
 `docs/status.md`. Local state is the only resource inventory until remote state is
 introduced, so protect it while resources exist.
-

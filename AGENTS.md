@@ -39,7 +39,7 @@ AgentCore Gateway and user-delegated OAuth.
 
 ## Supported toolchain
 
-- Terraform `~> 1.15.0`; local pin: `1.15.7`
+- Terraform `~> 1.15.0`; local pin: `1.15.8`
 - Terragrunt `~> 1.1`; local pin: `1.1.1`
 - AWS provider `~> 6.55`
 - AWS CLI v2
@@ -76,4 +76,3 @@ repository was created.
 A task is done when implementation, tests or validation, documentation, and task
 tracking agree. A Terraform feature is not deployment-verified merely because its
 HCL formats; record `terraform validate`, `plan`, and apply/invocation separately.
-

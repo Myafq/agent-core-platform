@@ -14,7 +14,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--harness-arn", required=True)
     parser.add_argument("--region", default="us-east-1")
-    parser.add_argument("--profile")
+    parser.add_argument("--profile", default="default")
     return parser.parse_args()
 
 

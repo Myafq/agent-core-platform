@@ -25,7 +25,7 @@ deployed and invoked successfully.
 
 ## Prerequisites
 
-- Terraform `~> 1.15.0` (`1.15.7` is pinned for local development)
+- Terraform `~> 1.15.0` (`1.15.8` is pinned for local development)
 - Terragrunt `~> 1.1` (`1.1.1` is pinned for local development)
 - AWS CLI v2 with a configured profile
 - Python 3.11+

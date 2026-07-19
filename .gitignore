@@ -2,7 +2,10 @@
 .terragrunt-cache/
 *.tfstate
 *.tfstate.*
+*.tfplan
+.env
+.env.*
+.telegram-offset
 .venv/
 __pycache__/
 .DS_Store
-
