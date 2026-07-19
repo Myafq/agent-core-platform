@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/agent-v1alpha1.schema.json",
+  "title": "AgentCore declarative agent v1alpha1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {
+      "const": "agentcore.example/v1alpha1"
+    },
+    "kind": {
+      "const": "Agent"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,38}[a-z0-9]$"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "tags": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engine", "model", "instructions", "limits"],
+      "properties": {
+        "engine": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": {"const": "harness"}
+          }
+        },
+        "model": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider", "id"],
+          "properties": {
+            "provider": {"const": "bedrock"},
+            "id": {"type": "string", "minLength": 1},
+            "temperature": {"type": "number", "minimum": 0, "maximum": 2},
+            "topP": {"type": "number", "minimum": 0, "maximum": 1}
+          }
+        },
+        "instructions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["system"],
+          "properties": {
+            "system": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["file"],
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9._/-]+\\.md$"
+                }
+              }
+            }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxIterations", "maxTokens", "timeoutSeconds"],
+          "properties": {
+            "maxIterations": {"type": "integer", "minimum": 1, "maximum": 100},
+            "maxTokens": {"type": "integer", "minimum": 1},
+            "timeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 3600}
+          }
+        }
+      }
+    }
+  }
+}
+

@@ -1,0 +1,8 @@
+.terraform/
+.terragrunt-cache/
+*.tfstate
+*.tfstate.*
+.venv/
+__pycache__/
+.DS_Store
+
