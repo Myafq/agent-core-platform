@@ -20,6 +20,7 @@ before ending work. New work receives the next ID in the relevant area.
 | TEST-001 | DONE | Run dependency-backed local validation | Checked 2026-07-19: installed dependencies in `.venv`; spec validation, CLI help, Python compilation, JSON parsing, Terraform formatting, and Terragrunt formatting passed. |
 | TF-001 | DONE | Initialize and validate the Harness unit | Checked 2026-07-19: `terragrunt init` selected hashicorp/aws 6.55.0; `terragrunt validate` passed with Terraform 1.15.8. |
 | TF-002 | DONE | Produce the first AWS plan | Checked 2026-07-19 with the default profile in us-east-1: 3 creates only—Harness, execution IAM role, and inline model-invocation policy; no replacements or exposed prompt content. |
+| TF-003 | IN_PROGRESS | Remove deprecated AWS region data-source attributes | Replaced all `data.aws_region.current.name` references with `data.aws_region.current.region` in the Harness module. Terraform formatting and source scan passed 2026-07-22; `terragrunt validate` is pending AWS STS/network access. |
 | AWS-001 | DONE | Deploy and invoke the basic Harness | User confirmed 2026-07-20 that the deployed Harness works with `moonshotai.kimi-k2.5` through Bedrock Mantle Chat Completions after applying the model/API-format and execution-policy changes. Depends on TF-002. |
 
 ## Milestone M1 — hardening the abstraction

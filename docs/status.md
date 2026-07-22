@@ -80,6 +80,10 @@ Bedrock Mantle Chat Completions.
 - Checked 2026-07-22: the root README was updated with current tool, AWS
   access, mise bootstrap, dynamic-SSM, validation, deployment, and invocation
   requirements.
+- Checked 2026-07-22: replaced all deprecated `data.aws_region.current.name`
+  references in the Harness module with `.region`; Terraform formatting and a
+  source scan passed. `terragrunt validate` was blocked by unavailable DNS for
+  `sts.us-east-1.amazonaws.com`, so warning removal is not runtime-validated.
 
 ## Not yet verified
 

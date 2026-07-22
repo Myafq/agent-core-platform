@@ -1,6 +1,6 @@
 locals {
   harness_name       = replace(var.name, "-", "_")
-  harness_memory_arn = "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:memory/harness_${local.harness_name}_*"
+  harness_memory_arn = "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:memory/harness_${local.harness_name}_*"
   common_tags = merge(var.tags, {
     Agent       = var.name
     Description = var.description
@@ -82,13 +82,13 @@ data "aws_iam_policy_document" "execution" {
       "logs:CreateLogGroup",
       "logs:DescribeLogStreams",
     ]
-    resources = ["arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/bedrock-agentcore/runtimes/*"]
+    resources = ["arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/bedrock-agentcore/runtimes/*"]
   }
 
   statement {
     sid       = "CloudWatchLogsDescribeGroups"
     actions   = ["logs:DescribeLogGroups"]
-    resources = ["arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:*"]
+    resources = ["arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:*"]
   }
 
   statement {
@@ -97,7 +97,7 @@ data "aws_iam_policy_document" "execution" {
       "logs:CreateLogStream",
       "logs:PutLogEvents",
     ]
-    resources = ["arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/bedrock-agentcore/runtimes/*:log-stream:*"]
+    resources = ["arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/bedrock-agentcore/runtimes/*:log-stream:*"]
   }
 
   statement {
@@ -134,8 +134,8 @@ data "aws_iam_policy_document" "execution" {
       "bedrock-agentcore:GetWorkloadAccessTokenForJWT",
     ]
     resources = [
-      "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:workload-identity-directory/default",
-      "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:workload-identity-directory/default/workload-identity/harness_${local.harness_name}-*",
+      "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:workload-identity-directory/default",
+      "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:workload-identity-directory/default/workload-identity/harness_${local.harness_name}-*",
     ]
   }
 
@@ -150,7 +150,7 @@ data "aws_iam_policy_document" "execution" {
       "bedrock-agentcore:ConnectBrowserAutomationStream",
       "bedrock-agentcore:ConnectBrowserLiveViewStream",
     ]
-    resources = ["arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.name}:aws:browser/*"]
+    resources = ["arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:aws:browser/*"]
   }
 
   statement {
@@ -162,7 +162,7 @@ data "aws_iam_policy_document" "execution" {
       "bedrock-agentcore:ListCodeInterpreterSessions",
       "bedrock-agentcore:InvokeCodeInterpreter",
     ]
-    resources = ["arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.name}:aws:code-interpreter/*"]
+    resources = ["arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:aws:code-interpreter/*"]
   }
 }
 
