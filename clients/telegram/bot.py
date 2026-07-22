@@ -7,6 +7,7 @@ import argparse
 from dataclasses import dataclass
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import sys
@@ -19,6 +20,7 @@ import uuid
 
 TELEGRAM_API_URL = "https://api.telegram.org"
 TELEGRAM_MESSAGE_LIMIT = 4096
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--token-env", default="TELEGRAM_BOT_TOKEN")
     parser.add_argument("--poll-timeout", type=int, default=30)
     parser.add_argument("--offset-file", type=Path, default=Path(".telegram-offset"))
+    parser.add_argument("--debug", action="store_true", help="Log adapter activity to stderr without printing the bot token.")
     return parser.parse_args()
 
 
@@ -96,9 +99,11 @@ class TelegramClient:
         self.token = token
 
     def call(self, method: str, payload: dict[str, Any] | None = None, timeout: int = 40) -> Any:
+        request_payload = payload or {}
+        LOGGER.debug("Telegram request method=%s payload=%s", method, json.dumps(request_payload, sort_keys=True))
         request = Request(
             f"{TELEGRAM_API_URL}/bot{self.token}/{method}",
-            data=json.dumps(payload or {}).encode("utf-8"),
+            data=json.dumps(request_payload).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
@@ -109,6 +114,7 @@ class TelegramClient:
             raise TelegramApiError(f"Telegram {method} failed: {error}") from error
         if not result.get("ok"):
             raise TelegramApiError(f"Telegram {method} failed: {result.get('description', 'unknown error')}")
+        LOGGER.debug("Telegram response method=%s result=%s", method, json.dumps(result["result"], sort_keys=True))
         return result["result"]
 
     def send_text(self, chat_id: int, text: str) -> None:
@@ -117,6 +123,13 @@ class TelegramClient:
 
 
 def invoke_harness(client: Any, harness_arn: str, session_id: str, user_id: str, text: str) -> str:
+    LOGGER.debug(
+        "Harness invocation arn=%s session_id=%s user_id=%s text=%r",
+        harness_arn,
+        session_id,
+        user_id,
+        text,
+    )
     response = client.invoke_harness(
         harnessArn=harness_arn,
         qualifier="DEFAULT",
@@ -126,6 +139,7 @@ def invoke_harness(client: Any, harness_arn: str, session_id: str, user_id: str,
     )
     chunks: list[str] = []
     for event in response["stream"]:
+        LOGGER.debug("Harness stream event=%s", json.dumps(event, sort_keys=True, default=str))
         delta = event.get("contentBlockDelta", {}).get("delta", {})
         if "text" in delta:
             chunks.append(delta["text"])
@@ -137,6 +151,9 @@ def invoke_harness(client: Any, harness_arn: str, session_id: str, user_id: str,
 
 def main() -> int:
     args = parse_args()
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s")
+        LOGGER.debug("Telegram debug logging enabled; the bot token is never logged.")
     token = os.environ.get(args.token_env)
     if not token:
         print(f"Set {args.token_env} to the bot token before starting the adapter.", file=sys.stderr)
@@ -164,6 +181,15 @@ def main() -> int:
     harness = boto3.Session(profile_name=args.profile, region_name=args.region).client("bedrock-agentcore")
     offset = load_offset(args.offset_file)
     sessions: dict[int, str] = {}
+    LOGGER.debug(
+        "Adapter configured region=%s profile=%s harness_arn=%s offset_file=%s offset=%s poll_timeout=%s",
+        args.region,
+        args.profile,
+        args.harness_arn,
+        args.offset_file,
+        offset,
+        args.poll_timeout,
+    )
     print("Telegram long polling started. Press Ctrl-C to stop.")
 
     while True:
@@ -173,20 +199,26 @@ def main() -> int:
                 {"offset": offset, "timeout": args.poll_timeout, "allowed_updates": ["message"]},
                 timeout=args.poll_timeout + 10,
             )
+            LOGGER.debug("Received %d Telegram updates", len(updates))
             for update in updates:
+                LOGGER.debug("Processing Telegram update=%s", json.dumps(update, sort_keys=True))
                 update_id = update.get("update_id")
                 if isinstance(update_id, int):
                     offset = update_id + 1
                     save_offset(args.offset_file, offset)
+                    LOGGER.debug("Saved Telegram offset=%s to %s", offset, args.offset_file)
                 message = incoming_message(update)
                 if message is None or not message.text:
+                    LOGGER.debug("Ignored non-private or non-text Telegram update")
                     continue
                 command = command_name(message.text)
                 if command in {"/start", "/help"}:
+                    LOGGER.debug("Handling Telegram command=%s chat_id=%s", command, message.chat_id)
                     telegram.send_text(message.chat_id, "Send a message to chat with the agent. Use /new for a fresh session.")
                     continue
                 if command == "/new":
                     sessions[message.chat_id] = f"telegram-{uuid.uuid4().hex}"
+                    LOGGER.debug("Started new Harness session chat_id=%s session_id=%s", message.chat_id, sessions[message.chat_id])
                     telegram.send_text(message.chat_id, "Started a fresh session.")
                     continue
                 session_id = sessions.setdefault(message.chat_id, initial_session_id(message.chat_id))
@@ -198,14 +230,17 @@ def main() -> int:
                         telegram_identity(message.chat_id, message.user_id),
                         message.text,
                     )
+                    LOGGER.debug("Harness response characters=%d chat_id=%s", len(response), message.chat_id)
                     telegram.send_text(message.chat_id, response)
                 except (BotoCoreError, ClientError, RuntimeError, TelegramApiError) as error:
+                    LOGGER.debug("Message handling failure", exc_info=error)
                     print(f"Message handling failed: {error}", file=sys.stderr)
                     telegram.send_text(message.chat_id, "The agent could not complete that request. Please try again.")
         except KeyboardInterrupt:
             print("\nTelegram long polling stopped.")
             return 0
         except TelegramApiError as error:
+            LOGGER.debug("Long-polling failure", exc_info=error)
             print(error, file=sys.stderr)
             time.sleep(2)
 

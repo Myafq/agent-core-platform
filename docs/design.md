@@ -34,7 +34,7 @@ Solid lines are the M0 scope. Dotted lines are planned GitHub integration work.
 `agents/<name>/agent.yaml` owns product intent:
 
 - engine selection;
-- model and inference parameters;
+- model, API format, and inference parameters;
 - prompt references;
 - limits;
 - eventually tools, identity requirements, memory, and safety policy.
@@ -137,6 +137,10 @@ Environment overlays must not silently override security-sensitive agent intent.
 
 - AgentCore Harness and its Terraform resource are new and may have provider/API
   defects; keep deployment evidence separate from static validation.
+- The AWS provider version currently used by this lab does not expose Harness
+  `bedrockModelConfig.apiFormat`. Terraform creates the Harness, then a
+  `terraform_data` local provisioner calls `update-harness` to select the
+  Bedrock Mantle API format. Keep this step until provider support lands.
 - End-to-end Harness → Gateway → Identity user binding must be proven before the
   GitHub schema is stabilized.
 - The Harness execution role scopes model invocation to the configured foundation

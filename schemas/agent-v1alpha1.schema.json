@@ -50,7 +50,8 @@
           "required": ["provider", "id"],
           "properties": {
             "provider": {"const": "bedrock"},
-            "id": {"type": "string", "minLength": 1},
+            "id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]+$"},
+            "apiFormat": {"enum": ["converse_stream", "responses", "chat_completions"]},
             "temperature": {"type": "number", "minimum": 0, "maximum": 2},
             "topP": {"type": "number", "minimum": 0, "maximum": 1}
           }
@@ -87,4 +88,3 @@
     }
   }
 }
-

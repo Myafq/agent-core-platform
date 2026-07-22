@@ -13,7 +13,8 @@ spec:
 
   model:
     provider: bedrock
-    id: amazon.nova-lite-v1:0
+    id: moonshotai.kimi-k2.5
+    apiFormat: chat_completions
     temperature: 0.2
     topP: 0.9
 
@@ -25,4 +26,3 @@ spec:
     maxIterations: 8
     maxTokens: 2048
     timeoutSeconds: 120
-

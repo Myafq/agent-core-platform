@@ -1,6 +1,5 @@
 locals {
   harness_name       = replace(var.name, "-", "_")
-  foundation_model   = "arn:${data.aws_partition.current.partition}:bedrock:${data.aws_region.current.name}::foundation-model/${var.model_id}"
   harness_memory_arn = "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:memory/harness_${local.harness_name}_*"
   common_tags = merge(var.tags, {
     Agent       = var.name
@@ -27,12 +26,29 @@ data "aws_iam_policy_document" "assume_role" {
 }
 
 data "aws_iam_policy_document" "execution" {
+  # Mantle model IDs are authorized through the service action and model
+  # condition key rather than a foundation-model ARN resource.
   statement {
-    sid = "InvokeConfiguredBedrockModel"
-    actions = [
-      "bedrock:InvokeModel",
-      "bedrock:InvokeModelWithResponseStream",
-    ]
+    sid       = "ReadBedrockMantleModelMetadata"
+    actions   = ["bedrock-mantle:GetModel", "bedrock-mantle:GetProject"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "InvokeConfiguredBedrockMantleModel"
+    actions   = ["bedrock-mantle:CreateInference"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "bedrock-mantle:Model"
+      values   = [var.model_id]
+    }
+  }
+
+  statement {
+    sid       = "CallBedrockMantleWithBearerToken"
+    actions   = ["bedrock-mantle:CallWithBearerToken"]
     resources = ["*"]
   }
 
@@ -188,4 +204,37 @@ resource "aws_bedrockagentcore_harness" "this" {
   tags            = local.common_tags
 
   depends_on = [aws_iam_role_policy.execution]
+
+  # The post-create control-plane update owns this field with apiFormat.
+  lifecycle {
+    ignore_changes = [model[0].bedrock_model_config[0].max_tokens]
+  }
+}
+
+resource "aws_bedrockagentcore_oauth2_credential_provider" "github" {
+  name                       = var.github_oauth_provider_name
+  credential_provider_vendor = "GithubOauth2"
+  tags                       = local.common_tags
+
+  oauth2_provider_config {
+    github_oauth2_provider_config {
+      client_id_wo                  = var.github_client_id
+      client_secret_wo              = var.github_client_secret
+      client_credentials_wo_version = var.github_credentials_version
+    }
+  }
+}
+
+# AWS provider 6.55 does not yet expose BedrockModelConfig.apiFormat. Apply the
+# supported control-plane field after Terraform creates or changes the Harness.
+resource "terraform_data" "model_api_format" {
+  triggers_replace = {
+    harness_arn = aws_bedrockagentcore_harness.this.arn
+    model_id    = var.model_id
+    api_format  = var.api_format
+  }
+
+  provisioner "local-exec" {
+    command = "aws bedrock-agentcore-control update-harness --region '${data.aws_region.current.region}' --harness-id '${split("/", aws_bedrockagentcore_harness.this.arn)[1]}' --model '${jsonencode({ bedrockModelConfig = { modelId = var.model_id, apiFormat = var.api_format, maxTokens = var.max_tokens, temperature = var.temperature, topP = var.top_p } })}'"
+  }
 }

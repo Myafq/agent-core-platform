@@ -19,6 +19,17 @@ variable "model_id" {
   type        = string
 }
 
+variable "api_format" {
+  description = "API format used to invoke the Bedrock model."
+  type        = string
+  default     = "converse_stream"
+
+  validation {
+    condition     = contains(["converse_stream", "responses", "chat_completions"], var.api_format)
+    error_message = "api_format must be converse_stream, responses, or chat_completions."
+  }
+}
+
 variable "temperature" {
   type    = number
   default = 0.2
@@ -52,3 +63,28 @@ variable "tags" {
   default = {}
 }
 
+variable "github_oauth_provider_name" {
+  description = "Name of the AgentCore GitHub OAuth credential provider."
+  type        = string
+  default     = "github-assistant-oauth"
+}
+
+variable "github_client_id" {
+  description = "GitHub OAuth App client ID. Ephemeral; never stored in state."
+  type        = string
+  sensitive   = true
+  ephemeral   = true
+}
+
+variable "github_client_secret" {
+  description = "GitHub OAuth App client secret. Ephemeral; never stored in state."
+  type        = string
+  sensitive   = true
+  ephemeral   = true
+}
+
+variable "github_credentials_version" {
+  description = "Increase after rotating either GitHub OAuth App credential."
+  type        = number
+  default     = 1
+}

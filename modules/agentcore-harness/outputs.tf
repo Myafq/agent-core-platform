@@ -11,3 +11,7 @@ output "execution_role_arn" {
   value = aws_iam_role.this.arn
 }
 
+output "github_oauth_credential_provider_arn" {
+  description = "Non-secret ARN used by the future GitHub Gateway target."
+  value       = aws_bedrockagentcore_oauth2_credential_provider.github.credential_provider_arn
+}
