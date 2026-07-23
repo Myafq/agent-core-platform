@@ -125,6 +125,31 @@ data "aws_iam_policy_document" "execution" {
     resources = [local.harness_memory_arn]
   }
 
+  statement {
+    sid       = "InvokeGitHubGateway"
+    actions   = ["bedrock-agentcore:InvokeGateway"]
+    resources = [var.github_gateway_arn]
+  }
+
+  # OAuth token retrieval is performed by the Harness only for its configured
+  # Gateway tool. The Gateway service role owns outbound target access.
+  statement {
+    sid     = "GetGitHubGatewayOauthToken"
+    actions = ["bedrock-agentcore:GetResourceOauth2Token"]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:token-vault/default",
+      "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:workload-identity-directory/default",
+      "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:workload-identity-directory/default/workload-identity/harness_${local.harness_name}-*",
+      var.github_oauth_provider_arn,
+    ]
+  }
+
+  statement {
+    sid       = "ReadGitHubGatewayOauthClientSecret"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [var.github_client_secret_arn]
+  }
+
   # Default AgentCore tools and workload identity are available for future YAML
   # tool declarations. Gateway, OAuth, S3, and Git access remain opt-in.
   statement {
@@ -194,10 +219,29 @@ resource "aws_bedrockagentcore_harness" "this" {
     text = var.system_prompt
   }
 
-  # InvokeHarness requires a non-empty allow-list when the field is supplied.
-  # This unmatched sentinel prevents the default shell and filesystem tools from
-  # becoming available before this lab explicitly adds governed tools.
-  allowed_tools   = ["__no_tools_configured__"]
+  tool {
+    type = "agentcore_gateway"
+    name = "github"
+
+    config {
+      agentcore_gateway {
+        gateway_arn = var.github_gateway_arn
+
+        outbound_auth {
+          oauth {
+            provider_arn       = var.github_oauth_provider_arn
+            grant_type         = "AUTHORIZATION_CODE"
+            default_return_url = var.github_post_consent_return_url
+            scopes             = ["read:user"]
+          }
+        }
+      }
+    }
+  }
+
+  # The Gateway's target exposes one OpenAPI operation. No built-in shell or
+  # filesystem tool, other Gateway server, or generated operation is allowed.
+  allowed_tools   = ["@github/getAuthenticatedUser"]
   max_iterations  = var.max_iterations
   max_tokens      = var.max_tokens
   timeout_seconds = var.timeout_seconds
@@ -208,20 +252,6 @@ resource "aws_bedrockagentcore_harness" "this" {
   # The post-create control-plane update owns this field with apiFormat.
   lifecycle {
     ignore_changes = [model[0].bedrock_model_config[0].max_tokens]
-  }
-}
-
-resource "aws_bedrockagentcore_oauth2_credential_provider" "github" {
-  name                       = var.github_oauth_provider_name
-  credential_provider_vendor = "GithubOauth2"
-  tags                       = local.common_tags
-
-  oauth2_provider_config {
-    github_oauth2_provider_config {
-      client_id_wo                  = var.github_client_id
-      client_secret_wo              = var.github_client_secret
-      client_credentials_wo_version = var.github_credentials_version
-    }
   }
 }
 

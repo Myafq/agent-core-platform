@@ -2,115 +2,66 @@
 
 Last updated: 2026-07-22
 
-## Summary
+## Deployed
 
-The repository contains a deployed M0 YAML-defined AgentCore Harness and a local
-streaming CLI. The Harness has been successfully tested with Kimi K2.5 through
-Bedrock Mantle Chat Completions.
+- `github-assistant` Harness: `READY`.
+- Model: `moonshotai.kimi-k2.5`, Mantle `chat_completions`; live Harness
+  invocation previously succeeded.
+- AgentCore OAuth provider `github-assistant-oauth`: `READY`.
+- Generated OAuth callback registered in the development GitHub OAuth App.
+- Encrypted, versioned S3 state with S3-native locking:
+  - OAuth: `dev/us-east-1/platform/github-oauth/terraform.tfstate`
+  - Agent: `dev/us-east-1/agents/github-assistant/terraform.tfstate`
+  - Gateway: `dev/us-east-1/platform/github-gateway/terraform.tfstate`
+  - Legacy combined key: empty; older S3 versions retained for rollback.
 
-## Implemented
+## Implemented but not deployed
 
-- `v1alpha1` JSON Schema and sample `github-assistant` YAML.
-- External system prompt with directory-bound reference validation.
-- Terragrunt dev unit that decodes YAML and resolves the prompt.
-- Terraform module for Harness, execution role/policy, model settings, limits,
-  tags, and outputs.
-- Kimi K2.5 through Bedrock Mantle (`moonshotai.kimi-k2.5`) with declarative
-  `chat_completions` API-format selection. Kimi does not support Mantle
-  `/v1/responses`.
-- Streaming Python CLI with stable local user ID and replaceable session ID.
-- Optional local Telegram long-polling adapter for private text chats, with no
-  public ingress or checked-in bot token.
-- Current release pins: Terraform 1.15.8 and Terragrunt 1.1.1.
-- GitHub OAuth credential provider in the existing `github-assistant` Harness
-  module and state. Mise passes SSM parameters only to ephemeral Terraform
-  variables and write-only provider arguments.
-- Repository handoff documentation and task tracker.
+- Shared MCP/IAM Gateway and one `GET /user` OpenAPI target.
+- Harness `github` Gateway tool with only
+  `@github/getAuthenticatedUser`.
+- CLI OAuth event parser and safe consent UX. Live AgentCore event shape remains
+  unknown.
+- Local Telegram long-polling adapter. Telegram forwarding and OAuth UX are not
+  live-verified.
 
-## Verification evidence
+## Latest verification
 
-- Python source compiled with Python 3.13.1.
-- JSON Schema parsed with Python's standard JSON parser.
-- Agent YAML parsed with Ruby Psych.
-- HCL files were formatted by the previously installed Terragrunt 0.31.0 parser.
-- CLI argument parser was exercised.
-- Checked 2026-07-19 in `.venv` with Python 3.14.6: `jsonschema` and PyYAML
-  installed, sample spec validation and CLI help passed; Python compilation, JSON
-  parsing, Terraform format check, and Terragrunt HCL format check passed.
-- Checked 2026-07-19: `terragrunt init` selected hashicorp/aws 6.55.0 and
-  `terragrunt validate` passed with Terraform 1.15.8.
-- Checked 2026-07-19 with the default AWS profile in us-east-1: the first plan
-  contains 3 creates only—the Harness, execution role, and its inline
-  model-invocation policy. No replacements or prompt content were exposed.
-- Applied 2026-07-19 in us-east-1. Harness output resolved; the CLI reached the
-  service, but invocation failed because the Harness execution role lacks
-  `bedrock-agentcore:ListEvents` on its memory resource.
-- Checked 2026-07-19: six standard-library CLI-level validator tests passed,
-  covering valid and invalid specs plus prompt-reference safety.
-- Checked 2026-07-19: five token-free Telegram adapter tests, all validator
-  tests, Python compilation, and Telegram CLI help passed.
-- Checked 2026-07-19: Telegram `--debug` help is present and all 11 offline
-  tests pass. Debug output excludes the bot token.
-- Checked 2026-07-20: Kimi K2.5 model spec validation, 11 offline tests,
-  Terraform formatting, Terragrunt formatting, and `terragrunt validate` passed.
-  Validation reports existing AWS provider deprecation warnings for
-  `data.aws_region.current.name`.
-- User confirmed 2026-07-20: deployed Harness invocation succeeds with
-  `moonshotai.kimi-k2.5` using Mantle `chat_completions`.
-- Checked 2026-07-22: the GitHub OAuth credential-provider unit initialized
-  against hashicorp/aws 6.55.0 and `terragrunt validate` passed. No Parameter
-  Store values were read and no AWS resources were created.
-- Checked 2026-07-22: GitHub OAuth was merged into the existing Harness
-  Terragrunt unit and local state. A read-only plan refreshed the deployed
-  Harness without resource replacement.
-- Checked 2026-07-22: migrated `github-assistant` state to encrypted, versioned
-  S3 key `dev/us-east-1/github-assistant/terraform.tfstate` with S3-native
-  locking. Remote-state plan loaded the existing Harness and staged only the
-  GitHub OAuth credential provider; write-only credential values were not shown.
-- Checked 2026-07-22: `extensions/mise-aws-ssm` was tested with a local mocked
-  AWS CLI. It maps configured SecureString names to environment values without
-  printing or caching them. Terraform receives its inputs through the repository
-  `mise.toml`.
-- Checked 2026-07-22: the linked `aws-ssm` mise plugin read both configured
-  SecureStrings from Parameter Store in a non-printing test; both Terraform
-  environment variables were non-empty. Values were not logged.
-- Checked 2026-07-22: `scripts/bootstrap_mise_plugins.sh` links the checked-out
-  `aws-ssm` extension from `/private/tmp` before mise parses project
-  configuration. `mise plugins ls` reported `aws-ssm`.
-- Checked 2026-07-22: the root README was updated with current tool, AWS
-  access, mise bootstrap, dynamic-SSM, validation, deployment, and invocation
-  requirements.
-- Checked 2026-07-22: replaced all deprecated `data.aws_region.current.name`
-  references in the Harness module with `.region`; Terraform formatting and a
-  source scan passed. `terragrunt validate` was blocked by unavailable DNS for
-  `sts.us-east-1.amazonaws.com`, so warning removal is not runtime-validated.
+- State split completed with no AWS resource changes:
+  - OAuth state: 1 resource, 2 non-secret outputs.
+  - Agent state: 9 resource/data addresses, 3 non-secret outputs.
+  - Legacy state: 0 resources, 0 outputs.
+  - OAuth and agent refresh-only applies: `0 added, 0 changed, 0 destroyed`.
+  - Final OAuth plan: `No changes`.
+- OAuth provider and Harness confirmed `READY` after migration.
+- Gateway initialized with
+  `https://t.me/gh_agent_517_bot?start=github-consent`.
+- Gateway plan succeeded: 4 creates only (Gateway, one `GET /user` target,
+  scoped role, and scoped policy), with no changes or destroys. A full
+  `terragrunt run --all -- plan` also succeeded: OAuth has no changes; the
+  Gateway has 4 creates; the existing Harness has 3 in-place changes to attach
+  the planned tool and IAM. The unapplied Gateway has shape-valid mock outputs
+  for agent `validate`/`plan` only; `apply` cannot use them.
+- Current source checks: 44 tests, GitHub contract validation, Terraform and
+  Terragrunt formatting, and `git diff --check` passed.
 
-## Not yet verified
+Rollback evidence is retained in S3 version history. Exact version IDs and
+resource-level task evidence remain in Git history; they are not operational
+inputs.
 
-- Whether the unmatched `allowed_tools` sentinel is accepted by the live Harness
-  API and suppresses built-in tools as intended.
-- Bedrock model availability in the target AWS account and region.
-- Successful streamed Harness response and cleanup are verified for the Harness;
-  Telegram forwarding remains unverified.
-- Live Telegram authentication, long polling, and Harness response forwarding.
-- GitHub OAuth/Gateway behavior; the credential provider is staged but not
-  created, and no user has authorized it.
+## Blockers
 
-## Current blockers
+- IAM/SigV4 Harness invocation does not propagate a verified end-user identity to
+  Token Vault. GH-010/GH-001 require a supported Bearer JWT inbound path.
+- GitHub OAuth App `repo` scope is unacceptable for read-only private source.
+- The local Terraform principal needs the AgentCore control-plane permission used
+  by the Harness model-format update when that configuration changes.
+- GitHub requires `User-Agent`; confirm AgentCore supplies one during the live
+  Gateway test before changing the frozen OpenAPI contract.
 
-- `TOOL-001` is complete: mise provides Terraform 1.15.8; Terragrunt 1.1.1 and
-  AWS CLI 2.36.2 are installed.
-- The local Terraform principal needs the AgentCore control-plane permission
-  required by the `update-harness` post-create step when changing model config.
-- GitHub M2 requires an explicit choice between the repository's GitHub App
-  user-token target and AgentCore's native `GithubOauth2` provider, which uses
-  a GitHub OAuth App. The native OAuth path is safe for the planned `GET /user`
-  and public-resource spike, but GitHub cannot scope private source-code access
-  to read-only; its `repo` scope includes write access. No external GitHub or
-  AWS identity resource has been changed.
+## Next
 
-## Immediate next task
-
-Next: explicitly authorize creation of the staged credential provider, register
-its generated callback URL, then complete `GH-001` with the documented
-two-user, `read:user` experiment.
+Retry GH-005 Gateway validation and produce a reviewed read-only plan. Do not
+apply Gateway or Harness tool changes until the JWT identity dependency and
+explicit apply authorization are satisfied. `TASKS.md` is authoritative for
+acceptance criteria.

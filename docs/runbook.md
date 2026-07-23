@@ -1,115 +1,115 @@
-# Development runbook
+# Runbook
 
-Run commands from the repository root unless a command says otherwise.
+Run from the repository root unless noted.
 
-## Verify tools
-
-```shell
-terraform version
-terragrunt --version
-aws --version
-python3 --version
-```
-
-Expected release lines are recorded in `AGENTS.md` and the version files.
-
-## Create the Python environment
-
-```shell
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pip install -r clients/cli/requirements.txt
-```
-
-## Validate locally
-
-```shell
-.venv/bin/python scripts/validate_spec.py agents/github-assistant/agent.yaml
-python3 -m py_compile scripts/validate_spec.py clients/cli/chat.py
-python3 -m json.tool schemas/agent-v1alpha1.schema.json >/dev/null
-terraform fmt -check -recursive modules
-terragrunt hcl fmt --check
-```
-
-If the installed Terragrunt release uses a different non-deprecated formatting
-command, update this runbook and record the exact verified command in
-`docs/status.md`.
-
-## Initialize and validate Terraform
-
-```shell
-export AWS_PROFILE=your-profile
-export AWS_REGION=us-east-1
-cd live/dev/us-east-1/github-assistant
-terragrunt init
-terragrunt validate
-terragrunt plan -out=plan.tfplan
-```
-
-Before accepting a plan, confirm it contains only the expected Harness IAM role,
-inline policy, and Harness. Do not commit `plan.tfplan`, generated state, or caches.
-
-The apply also runs the AWS CLI to set the Harness model API format because AWS
-provider 6.55 does not expose that control-plane field. The local principal must
-have permission to update the Harness in addition to the normal Terraform
-permissions.
-
-Terraform state is stored in the encrypted S3 backend with S3-native locking.
-The development state key is `dev/us-east-1/github-assistant/terraform.tfstate`.
-Do not delete the local cache copy until migration and `terragrunt plan` have
-both completed successfully.
-
-## Apply
-
-Apply only with explicit user authorization:
-
-```shell
-cd live/dev/us-east-1/github-assistant
-terragrunt apply plan.tfplan
-terragrunt output -raw harness_arn
-```
-
-Record non-sensitive resource identifiers and the provider/tool versions in
-`docs/status.md`.
-
-## Create the GitHub OAuth credential provider
-
-The GitHub OAuth App client ID and secret are read locally from the existing SSM
-Parameter Store SecureString parameters. They are supplied only to ephemeral
-variables in the `github-assistant` unit and the AWS provider's write-only
-arguments; do not use an `aws_ssm_parameter` Terraform data source because the
-parameter value would be recorded in Terraform state.
-
-Before using mise in this repository, run the idempotent bootstrap once:
+## Bootstrap and validate
 
 ```shell
 scripts/bootstrap_mise_plugins.sh
+mise exec -- terraform version
+mise exec -- terragrunt --version
+mise exec -- aws --version
+python3 --version
+
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/pip install -r clients/cli/requirements.txt
+.venv/bin/python -m unittest discover -s tests
+.venv/bin/python scripts/validate_spec.py agents/github-assistant/agent.yaml
+.venv/bin/python scripts/validate_github_contract.py
+python3 -m py_compile scripts/validate_spec.py clients/cli/chat.py
+python3 -m json.tool schemas/agent-v1alpha1.schema.json >/dev/null
+mise exec -- terraform fmt -check -recursive modules
+mise exec -- terragrunt hcl fmt --check
+git diff --check
 ```
 
-The repository `mise.toml` maps the required Terraform variables to Parameter
-Store names. Set `AWS_PROFILE` and `AWS_REGION` in the shell, then use
-`mise exec` for every Terraform or Terragrunt command; it fetches the values
-only for that command.
+Do not run `mise env`; it prints values loaded from SSM.
 
-This creates an AWS Identity resource. Run it only with explicit authorization:
+## Environment
 
 ```shell
 export AWS_PROFILE=your-profile
 export AWS_REGION=us-east-1
-cd live/dev/us-east-1/github-assistant
-mise exec -- terragrunt apply
+export GITHUB_POST_CONSENT_RETURN_URL='https://t.me/gh_agent_517_bot?start=github-consent'
 ```
 
-After creation, retrieve the generated callback URL and register it in the
-GitHub OAuth App. This command does not read any secret:
+The return URL is the browser destination after consent. It is not the
+AgentCore-generated OAuth callback registered in GitHub.
+
+## State
+
+Use only these state owners:
+
+```text
+platform/github-oauth       dev/us-east-1/platform/github-oauth/terraform.tfstate
+platform/github-gateway     dev/us-east-1/platform/github-gateway/terraform.tfstate
+agents/github-assistant     dev/us-east-1/agents/github-assistant/terraform.tfstate
+```
+
+The legacy `dev/us-east-1/github-assistant/terraform.tfstate` current version is
+empty. Restore an older version only as an explicitly reviewed rollback. Never
+print or commit raw state.
+
+## Plan in dependency order
+
+OAuth is deployed and should plan with no changes:
+
+```shell
+cd live/dev/us-east-1/platform/github-oauth
+mise exec -- terragrunt init
+mise exec -- terragrunt validate
+mise exec -- terragrunt plan -out=plan.tfplan
+```
+
+Gateway is next:
+
+```shell
+cd live/dev/us-east-1/platform/github-gateway
+mise exec -- terragrunt init
+mise exec -- terragrunt validate
+mise exec -- terragrunt plan -out=plan.tfplan
+```
+
+Accept only the Gateway, scoped role/policy, and one
+`github-current-user` target. Reject provider/Harness replacement, secret
+output, operations other than `GET /user`, scopes other than `read:user`, or
+broader IAM.
+
+After the Gateway exists, plan the agent:
+
+```shell
+cd live/dev/us-east-1/agents/github-assistant
+mise exec -- terragrunt init
+mise exec -- terragrunt validate
+mise exec -- terragrunt plan -out=plan.tfplan
+```
+
+Accept one `github` Gateway tool, exactly
+`@github/getAuthenticatedUser`, and narrowly scoped Gateway/Token
+Vault/workload-identity/client-secret access. The provider 6.55 Harness
+`apiFormat` workaround runs `update-harness`; the operator needs that
+control-plane permission.
+
+Plans are safe. Apply or destroy requires explicit authorization. Do not apply
+the GitHub tool slice until JWT-backed inbound identity exists.
+
+If AWS provider startup times out, rerun `terragrunt init --source-update` once.
+If it repeats, stop and record the blocker; repeated initialization is not
+verification.
+
+## Inspect OAuth without secrets
 
 ```shell
 aws bedrock-agentcore-control get-oauth2-credential-provider \
   --name github-assistant-oauth \
   --region "$AWS_REGION" \
-  --query 'callbackUrl' \
-  --output text
+  --query '{name:name,arn:credentialProviderArn,status:status,vendor:credentialProviderVendor}' \
+  --output json
 ```
+
+Retrieve `callbackUrl` only for a local comparison with the GitHub OAuth App.
+Do not paste it into shared logs.
 
 ## Invoke
 
@@ -117,44 +117,27 @@ aws bedrock-agentcore-control get-oauth2-credential-provider \
 .venv/bin/python clients/cli/chat.py \
   --region "$AWS_REGION" \
   --profile "$AWS_PROFILE" \
-  --harness-arn "$(cd live/dev/us-east-1/github-assistant && terragrunt output -raw harness_arn)"
+  --harness-arn "$(cd live/dev/us-east-1/agents/github-assistant && mise exec -- terragrunt output -raw harness_arn)"
 ```
 
-The invoking AWS principal needs the relevant AgentCore Harness invocation
-permissions. Never paste tokens or credentials into the chat transcript.
+Use `/new` for a new session and `/quit` to exit. A consent URL may be shown
+once; authorize, return, and retry. The current IAM caller path is not proof of
+per-user OAuth isolation.
 
-## Run the local Telegram adapter
-
-Create a bot with Telegram's `@BotFather`, then export its token locally. Do not
-commit it or place it in YAML. Long polling cannot run while a Telegram webhook
-is configured.
+## Telegram
 
 ```shell
 export TELEGRAM_BOT_TOKEN=your-bot-token
 .venv/bin/python clients/telegram/bot.py \
   --region "$AWS_REGION" \
   --profile "$AWS_PROFILE" \
-  --harness-arn "$(cd live/dev/us-east-1/github-assistant && terragrunt output -raw harness_arn)"
+  --harness-arn "$(cd live/dev/us-east-1/agents/github-assistant && mise exec -- terragrunt output -raw harness_arn)"
 ```
 
-The adapter handles private text chats only. Use `/new` for a new Harness
-session. Stop it with `Ctrl-C`; no Telegram or AWS resource is changed.
-
-Append `--debug` to log Telegram requests and responses, incoming updates,
-offsets, session changes, and Harness stream events to stderr. Debug logs include
-chat content and resource identifiers, but never the bot token; do not share
-them outside the trusted development environment.
+Private chats only. No webhook. Never commit or log the bot token.
 
 ## Cleanup
 
-Destroy is destructive and requires explicit user authorization:
-
-```shell
-cd live/dev/us-east-1/github-assistant
-terragrunt plan -destroy
-terragrunt destroy
-```
-
-After cleanup, verify the Harness and IAM role are gone and update
-`docs/status.md`. Local state is the only resource inventory until remote state is
-introduced, so protect it while resources exist.
+Destroy agents separately from shared platform resources. Authorization to
+destroy an agent does not authorize destroying OAuth or Gateway stacks. Review a
+destroy plan for the exact unit before execution.

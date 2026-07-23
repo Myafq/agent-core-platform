@@ -63,28 +63,47 @@ variable "tags" {
   default = {}
 }
 
-variable "github_oauth_provider_name" {
-  description = "Name of the AgentCore GitHub OAuth credential provider."
+variable "github_gateway_arn" {
+  description = "Non-secret ARN of the reviewed GitHub current-user Gateway, supplied after its deployment."
   type        = string
-  default     = "github-assistant-oauth"
+
+  validation {
+    condition     = can(regex("^arn:[^:]+:bedrock-agentcore:[^:]+:[0-9]{12}:gateway/.+$", var.github_gateway_arn))
+    error_message = "github_gateway_arn must be an AgentCore Gateway ARN."
+  }
 }
 
-variable "github_client_id" {
-  description = "GitHub OAuth App client ID. Ephemeral; never stored in state."
+variable "github_oauth_provider_arn" {
+  description = "Non-secret ARN of the shared GitHub OAuth credential provider."
   type        = string
-  sensitive   = true
-  ephemeral   = true
+
+  validation {
+    condition     = can(regex("^arn:[^:]+:bedrock-agentcore:[^:]+:[0-9]{12}:token-vault/.+/oauth2credentialprovider/.+$", var.github_oauth_provider_arn))
+    error_message = "github_oauth_provider_arn must be an AgentCore OAuth2 credential-provider ARN."
+  }
 }
 
-variable "github_client_secret" {
-  description = "GitHub OAuth App client secret. Ephemeral; never stored in state."
+variable "github_client_secret_arn" {
+  description = "Non-secret ARN of the GitHub OAuth client secret managed by AgentCore."
   type        = string
-  sensitive   = true
-  ephemeral   = true
+
+  validation {
+    condition     = can(regex("^arn:[^:]+:secretsmanager:[^:]+:[0-9]{12}:secret:.+$", var.github_client_secret_arn))
+    error_message = "github_client_secret_arn must be a Secrets Manager secret ARN."
+  }
 }
 
-variable "github_credentials_version" {
-  description = "Increase after rotating either GitHub OAuth App credential."
-  type        = number
-  default     = 1
+variable "github_post_consent_return_url" {
+  description = "Required non-secret HTTPS URL used after GitHub authorization-code consent."
+  type        = string
+
+  validation {
+    condition = (
+      can(regex("^https://[^[:space:]]+$", var.github_post_consent_return_url)) &&
+      !can(regex("^https://[^/?#]*@", var.github_post_consent_return_url)) &&
+      !can(regex("(?i)(?:[?&]|#)[^=&#]*(?:token|code|secret|password|credential|key)[^=&#]*(?:=|&|#|$)", var.github_post_consent_return_url)) &&
+      !can(regex("(?i)(?:[?&]|#)[^=&#]*=[^&#]*(?:token|code|secret|password|credential|key)[^&#]*", var.github_post_consent_return_url))
+    )
+    error_message = "github_post_consent_return_url must be HTTPS, contain no userinfo, and contain no sensitive query or fragment key/value."
+  }
 }

@@ -6,3 +6,4 @@ _.aws-ssm = {
         TF_VAR_github_client_secret = "/gh-agent/gh-oauth-client-secret"
         }
     }
+GITHUB_POST_CONSENT_RETURN_URL = "https://t.me/gh_agent_517_bot?start=github-consent"

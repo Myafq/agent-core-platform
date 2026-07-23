@@ -1,154 +1,131 @@
-# System design
+# Design and principles
 
 ## Objective
 
-Provide a human-friendly, versioned YAML contract for deploying and operating
-Amazon Bedrock AgentCore agents through Terragrunt and Terraform. The abstraction
-must make simple agents simple without hiding identity, security, or lifecycle
-boundaries.
-
-## Architecture
+Make simple AgentCore agents declarative without hiding identity, security,
+state, or lifecycle boundaries.
 
 ```mermaid
 flowchart LR
-  U["Developer"] --> CLI["Local CLI"]
-  CLI -->|"IAM + runtimeUserId"| H["AgentCore Harness"]
+  Y["agent.yaml + prompt"] --> TG["Terragrunt composition"]
+  TG --> H["Agent Harness"]
+  C["CLI or adapter"] --> H
   H --> M["Bedrock model"]
-  H -. "M2" .-> G["AgentCore Gateway"]
-  G -. "user OAuth" .-> GH["Curated GitHub API"]
-  ID["AgentCore Identity"] -.-> G
-
-  Y["agent.yaml + prompts"] --> TG["Terragrunt compiler"]
-  TG --> TF["Terraform modules"]
-  TF --> H
-  TF -.-> G
-  TF -.-> ID
+  H --> G["Shared Gateway"]
+  O["Shared OAuth provider"] -. "outbound auth" .-> G
+  G --> GH["Curated GitHub API"]
 ```
 
-Solid lines are the M0 scope. Dotted lines are planned GitHub integration work.
+## Principles
 
-## Layers and ownership
+1. **Intent stays declarative.** YAML describes model, prompt, limits, and
+   eventually tools and identity requirements. It does not contain executable
+   business logic, provider mechanics, ARNs, account IDs, or secrets.
 
-### Agent specification
+2. **Each layer has one job.** Terragrunt resolves files, environment context,
+   and dependencies. Terraform modules own AWS resources and IAM. Clients own
+   rendering, sessions, and protocol-specific behavior.
 
-`agents/<name>/agent.yaml` owns product intent:
+3. **Ownership follows lifecycle.** OAuth providers and Gateways are shared
+   platform components. Harnesses, prompts, execution roles, and tool allow-lists
+   belong to agents. Deleting an agent must not delete shared platform resources.
 
-- engine selection;
-- model, API format, and inference parameters;
-- prompt references;
-- limits;
-- eventually tools, identity requirements, memory, and safety policy.
+4. **Dependencies point toward consumers.**
 
-The YAML must not contain provider-specific ARN construction, Terraform lifecycle
-details, secrets, arbitrary code, or environment/account identifiers.
+   ```text
+   platform/github-oauth -> platform/github-gateway -> agents/*
+   ```
 
-### Prompt and skill assets
+   Platform stacks never depend on agent state. Consumers use typed, non-secret
+   outputs; copied ARNs and manual reverse handoffs are avoided.
 
-Prompts live beside the agent and are referenced by relative path. This keeps large
-instructions reviewable and testable. A prompt reference must remain within its
-agent directory. Future skills should use the same ownership model or immutable
-Git/S3 references.
+5. **State mirrors ownership.** Each independently managed component has its own
+   encrypted, locked state. Ownership changes use reviewed, versioned state
+   operations with zero resource recreation when practical.
 
-### Terragrunt composition
+6. **Secrets cross the narrowest boundary.** Secret values stay out of YAML,
+   HCL, plans, outputs, logs, and normal state. SSM references feed ephemeral
+   Terraform variables and provider write-only arguments. ARNs are not secrets.
 
-`live/<environment>/<region>/<agent>/terragrunt.hcl`:
+7. **Expose the minimum interface.** The GitHub spike allows exactly
+   `GET /user`, operation `getAuthenticatedUser`, OAuth scope `read:user`,
+   and Harness tool `@github/getAuthenticatedUser`. No `repo`, mutations,
+   arbitrary URLs, or caller-supplied headers.
 
-- loads and decodes YAML;
-- resolves local files;
-- supplies environment context;
-- translates camelCase contract fields to Terraform inputs;
-- composes modules and dependencies.
+8. **Identity is proven, not inferred.** A caller-supplied `runtimeUserId` is
+   opaque. IAM/SigV4 invocation does not prove end-user identity or Token Vault
+   isolation. User-authorized OAuth requires JWT-backed inbound identity and a
+   two-user isolation test.
 
-Terragrunt is a thin compiler/composition boundary, not the location for agent
-behavior.
+9. **Shared configuration is not shared identity.** Multiple agents may reuse an
+   OAuth provider and Gateway. This does not imply that end-user tokens are
+   shared or isolated across agents; live identity tests decide that claim.
+
+10. **Verification is layered.** Formatting and unit tests prove source
+    contracts. A plan proves proposed infrastructure. Apply/readiness proves
+    resources. Invocation proves runtime behavior. Documentation must name the
+    highest completed layer.
+
+11. **Provider workarounds stay contained.** Provider-specific shapes and
+    temporary control-plane workarounds belong in modules or composition, never
+    in the public YAML contract.
+
+12. **Mutation requires a separate safety design.** GitHub write operations need
+    explicit confirmation, least privilege, and auditability before entering the
+    contract.
+
+## Ownership
+
+### Agent contract
+
+`agents/<name>/agent.yaml` owns engine, model, prompt reference, limits, tags,
+and future normalized capabilities. Prompts remain adjacent reviewable files.
+References must not escape the agent directory.
+
+### Platform composition
+
+`live/<environment>/<region>/platform/` owns shared account/region services.
+Current units:
+
+- `github-oauth` — native AgentCore `GithubOauth2` provider.
+- `github-gateway` — MCP/IAM Gateway, scoped role, and curated OpenAPI target.
+
+### Agent composition
+
+`live/<environment>/<region>/agents/<name>/` composes one agent with reviewed
+platform outputs. Each Harness keeps an independent lifecycle and execution role.
 
 ### Terraform modules
 
-Modules own AWS resource mechanics, IAM, tags, lifecycle, and outputs. Inputs are
-resolved typed values, not filesystem paths or raw YAML strings. Modules should be
-small and composable:
+Modules accept resolved typed values. They own AWS mechanics, IAM, tags,
+validation, lifecycle, and non-secret outputs. They do not decode agent YAML or
+read repository files.
 
-- `agentcore-harness` — current;
-- `agentcore-gateway` — planned;
-- `agentcore-oauth-provider` — planned;
-- `agentcore-memory` — planned;
-- state/observability modules — planned.
+### Clients
 
-### Clients and adapters
+The CLI and Telegram adapter are thin callers. They keep stable user identifiers
+and replaceable session identifiers, render safe output, and never own
+infrastructure or prompts.
 
-Clients own presentation and protocol behavior. The local CLI signs requests with
-the developer's AWS credentials, provides stable user/session identifiers, and
-renders streamed Harness events. It does not own agent prompts or infrastructure.
+## Runtime and identity
 
-The optional Telegram adapter is a locally run long-polling client. It accepts
-private text messages, maps each chat to a stable Harness session, and renders
-the completed streamed reply as Telegram-sized messages. It never configures a
-webhook or exposes public ingress.
+Harness is the default declarative engine. Runtime is introduced only for a
+demonstrated orchestration, middleware, or library requirement.
 
-## Runtime choice
+The current public-read GitHub proof uses a GitHub OAuth App because AgentCore
+supports it natively. It cannot satisfy read-only private-repository access:
+GitHub OAuth App `repo` is too broad. Private source access requires a GitHub
+App or custom provider preserving app permissions, installation scope, and user
+authorization.
 
-Harness is the default because the desired abstraction is declarative: model,
-prompt, tools, memory, and limits. Custom AgentCore Runtime is introduced only
-after a concrete requirement needs custom orchestration, middleware, or libraries.
-Both engines may eventually implement the same normalized agent contract where
-their capabilities overlap.
+The configured post-consent destination is
+`https://t.me/gh_agent_517_bot?start=github-consent`. AgentCore's generated
+callback URL remains the value registered in the GitHub OAuth App; these URLs
+serve different purposes.
 
-## Identity model
+## Contract and versioning
 
-### Inbound
-
-M0 uses IAM/SigV4 from a trusted CLI. The CLI derives a non-sensitive stable local
-user ID and sends a separate random session ID. Shared or browser interfaces should
-use an actual JWT identity provider rather than accepting arbitrary user IDs.
-
-### Outbound GitHub
-
-The target design uses a GitHub App user access token managed by AgentCore
-Identity. Effective access is limited by the app permissions, installation scope,
-and the user's own GitHub permissions. AgentCore Gateway exposes a curated OpenAPI
-surface rather than the whole GitHub API.
-
-The first GitHub deployment is read-only. Mutations require a separate design for
-confirmation, authorization, and auditability.
-
-## Secrets
-
-- YAML contains logical credential references only.
-- OAuth client credentials enter Terraform through ephemeral variables and provider
-  write-only arguments where supported.
-- Secret values are never outputs.
-- Plans and state are inspected before accepting an OAuth implementation.
-- Local `.env` files and state are ignored and must not be committed.
-
-## Versioning
-
-The current contract is `agentcore.example/v1alpha1`. Additive experimental fields
-may be introduced within `v1alpha1`; breaking semantic changes require a new
-version and migration documentation. Terraform provider schemas are not exposed as
-the public YAML contract.
-
-## Deployment environments
-
-M0 uses local state for a single developer lab. Shared environments require an
-explicit state bootstrap with encryption, locking, and recovery documentation.
-Environment overlays must not silently override security-sensitive agent intent.
-
-## Known design risks
-
-- AgentCore Harness and its Terraform resource are new and may have provider/API
-  defects; keep deployment evidence separate from static validation.
-- The AWS provider version currently used by this lab does not expose Harness
-  `bedrockModelConfig.apiFormat`. Terraform creates the Harness, then a
-  `terraform_data` local provisioner calls `update-harness` to select the
-  Bedrock Mantle API format. Keep this step until provider support lands.
-- End-to-end Harness → Gateway → Identity user binding must be proven before the
-  GitHub schema is stabilized.
-- The Harness execution role scopes model invocation to the configured foundation
-  model and memory access to the Harness-owned memory ARN pattern. A small set of
-  AWS service actions still requires `Resource = "*"`; their allowed actions are
-  individually enumerated and metrics are restricted to the `bedrock-agentcore`
-  namespace. The role includes AgentCore's default Browser, Code Interpreter,
-  and workload-identity permissions; Gateway, OAuth, S3, and Git access are
-  added only with their corresponding declarative features.
-- A deny-by-default Harness tool allow-list currently uses an unmatched sentinel;
-  validate that behavior against the live API during TF-001/AWS-001.
+The public agent contract is `agentcore.example/v1alpha1`. Additive experiments
+may remain in `v1alpha1`; breaking semantics require a new version and migration
+notes. Executable GitHub contracts live under `contracts/github/` and are
+validated independently from prose.

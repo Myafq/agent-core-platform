@@ -1,0 +1,13 @@
+provider:
+  name: github-assistant-oauth
+  grant: AUTHORIZATION_CODE
+  scopes:
+    - read:user
+gateway:
+  name: github-assistant-gateway
+target:
+  name: github-current-user
+  server: github
+post_consent:
+  return_url_input: GITHUB_POST_CONSENT_RETURN_URL
+  required: true

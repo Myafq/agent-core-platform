@@ -1,0 +1,4 @@
+{
+  "type": "authorization_required",
+  "authorization_url": "https://example.invalid/authorize"
+}

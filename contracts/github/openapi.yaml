@@ -1,0 +1,62 @@
+openapi: 3.0.3
+info:
+  title: GitHub authenticated user
+  version: 1.0.0
+  description: Read-only contract for the authorizing GitHub user.
+servers:
+  - url: https://api.github.com
+paths:
+  /user:
+    get:
+      operationId: getAuthenticatedUser
+      summary: Get the authorizing GitHub user
+      description: Returns the authorizing GitHub user.
+      responses:
+        '200':
+          description: The authorizing GitHub user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthenticatedUser'
+        '401':
+          description: GitHub rejected the credentials.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: GitHub refused the request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: An unexpected GitHub API error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  schemas:
+    AuthenticatedUser:
+      type: object
+      required:
+        - login
+        - id
+        - html_url
+      properties:
+        login:
+          type: string
+        id:
+          type: integer
+          format: int64
+        html_url:
+          type: string
+          format: uri
+    Error:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
