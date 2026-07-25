@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/github-tool-response-v1alpha1.schema.json",
+  "title": "GitHub read tool response v1alpha1",
+  "oneOf": [
+    {"$ref": "#/$defs/repository"},
+    {"$ref": "#/$defs/file"}
+  ],
+  "$defs": {
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool", "repository"],
+      "properties": {
+        "tool": {"const": "getRepository"},
+        "repository": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["owner", "name", "private", "default_branch"],
+          "properties": {
+            "owner": {"type": "string", "maxLength": 100},
+            "name": {"type": "string", "maxLength": 100},
+            "private": {"type": "boolean"},
+            "default_branch": {"type": "string", "maxLength": 255}
+          }
+        }
+      }
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool", "file"],
+      "properties": {
+        "tool": {"const": "getFile"},
+        "file": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "ref", "content"],
+          "properties": {
+            "path": {"type": "string", "maxLength": 1024},
+            "ref": {"type": "string", "maxLength": 255},
+            "content": {"type": "string", "maxLength": 65536}
+          }
+        }
+      }
+    }
+  }
+}

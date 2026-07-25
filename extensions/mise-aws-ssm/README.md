@@ -13,12 +13,12 @@ scripts/bootstrap_mise_plugins.sh
 The script is idempotent and links the checked-out extension before mise parses
 the repository environment directive.
 
-The repository's `mise.toml` configures the current GitHub OAuth parameters.
-For another repository, add its parameter-name mapping to `mise.toml`:
+This repository currently has no SSM parameter mapping. For a repository that
+needs one, add parameter names (never values) to `mise.toml`:
 
 ```toml
 [env]
-_.aws-ssm = { tools = true, parameters = { TF_VAR_github_client_id = "/gh-agent/gh-oauth-client-id", TF_VAR_github_client_secret = "/gh-agent/gh-oauth-client-secret" } }
+_.aws-ssm = { tools = true, parameters = { EXAMPLE_TOKEN = "/service/example-token" } }
 ```
 
 `tools = true` makes a mise-managed AWS CLI available to the plugin. The plugin
@@ -28,7 +28,7 @@ inherits `AWS_PROFILE` and `AWS_REGION` from the current shell; `profile` and
 Verify without printing a secret:
 
 ```shell
-mise exec -- sh -c 'test -n "$TF_VAR_github_client_id" && test -n "$TF_VAR_github_client_secret"'
+mise exec -- sh -c 'test -n "$EXAMPLE_TOKEN"'
 ```
 
 The plugin requests each value with `aws ssm get-parameter --with-decryption` on

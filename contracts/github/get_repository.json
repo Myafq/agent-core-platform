@@ -1,0 +1,7 @@
+{
+  "tool": "getRepository",
+  "arguments": {
+    "owner": "example-org",
+    "repo": "example-repo"
+  }
+}

@@ -8,5 +8,6 @@
 .telegram-offset
 .venv/
 __pycache__/
+.build/
 .DS_Store
 **/mise.local.toml

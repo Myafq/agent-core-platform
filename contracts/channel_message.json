@@ -1,0 +1,8 @@
+{
+  "channel": "telegram",
+  "tenant_id": "telegram-bot-123",
+  "user_id": "42",
+  "conversation_id": "42",
+  "message_id": "99",
+  "text": "Summarize README.md"
+}

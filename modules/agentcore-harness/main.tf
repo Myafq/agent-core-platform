@@ -125,70 +125,6 @@ data "aws_iam_policy_document" "execution" {
     resources = [local.harness_memory_arn]
   }
 
-  statement {
-    sid       = "InvokeGitHubGateway"
-    actions   = ["bedrock-agentcore:InvokeGateway"]
-    resources = [var.github_gateway_arn]
-  }
-
-  # OAuth token retrieval is performed by the Harness only for its configured
-  # Gateway tool. The Gateway service role owns outbound target access.
-  statement {
-    sid     = "GetGitHubGatewayOauthToken"
-    actions = ["bedrock-agentcore:GetResourceOauth2Token"]
-    resources = [
-      "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:token-vault/default",
-      "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:workload-identity-directory/default",
-      "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:workload-identity-directory/default/workload-identity/harness_${local.harness_name}-*",
-      var.github_oauth_provider_arn,
-    ]
-  }
-
-  statement {
-    sid       = "ReadGitHubGatewayOauthClientSecret"
-    actions   = ["secretsmanager:GetSecretValue"]
-    resources = [var.github_client_secret_arn]
-  }
-
-  # Default AgentCore tools and workload identity are available for future YAML
-  # tool declarations. Gateway, OAuth, S3, and Git access remain opt-in.
-  statement {
-    sid = "AgentCoreWorkloadIdentity"
-    actions = [
-      "bedrock-agentcore:GetWorkloadAccessToken",
-      "bedrock-agentcore:GetWorkloadAccessTokenForJWT",
-    ]
-    resources = [
-      "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:workload-identity-directory/default",
-      "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:workload-identity-directory/default/workload-identity/harness_${local.harness_name}-*",
-    ]
-  }
-
-  statement {
-    sid = "AgentCoreBrowserDefault"
-    actions = [
-      "bedrock-agentcore:StartBrowserSession",
-      "bedrock-agentcore:StopBrowserSession",
-      "bedrock-agentcore:GetBrowserSession",
-      "bedrock-agentcore:ListBrowserSessions",
-      "bedrock-agentcore:UpdateBrowserStream",
-      "bedrock-agentcore:ConnectBrowserAutomationStream",
-      "bedrock-agentcore:ConnectBrowserLiveViewStream",
-    ]
-    resources = ["arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:aws:browser/*"]
-  }
-
-  statement {
-    sid = "AgentCoreCodeInterpreterDefault"
-    actions = [
-      "bedrock-agentcore:StartCodeInterpreterSession",
-      "bedrock-agentcore:StopCodeInterpreterSession",
-      "bedrock-agentcore:GetCodeInterpreterSession",
-      "bedrock-agentcore:ListCodeInterpreterSessions",
-      "bedrock-agentcore:InvokeCodeInterpreter",
-    ]
-    resources = ["arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:aws:code-interpreter/*"]
-  }
 }
 
 resource "aws_iam_role" "this" {
@@ -219,29 +155,6 @@ resource "aws_bedrockagentcore_harness" "this" {
     text = var.system_prompt
   }
 
-  tool {
-    type = "agentcore_gateway"
-    name = "github"
-
-    config {
-      agentcore_gateway {
-        gateway_arn = var.github_gateway_arn
-
-        outbound_auth {
-          oauth {
-            provider_arn       = var.github_oauth_provider_arn
-            grant_type         = "AUTHORIZATION_CODE"
-            default_return_url = var.github_post_consent_return_url
-            scopes             = ["read:user"]
-          }
-        }
-      }
-    }
-  }
-
-  # The Gateway's target exposes one OpenAPI operation. No built-in shell or
-  # filesystem tool, other Gateway server, or generated operation is allowed.
-  allowed_tools   = ["@github/getAuthenticatedUser"]
   max_iterations  = var.max_iterations
   max_tokens      = var.max_tokens
   timeout_seconds = var.timeout_seconds

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/channel-message-v1alpha1.schema.json",
+  "title": "Channel message v1alpha1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["channel", "tenant_id", "user_id", "conversation_id", "message_id", "text"],
+  "properties": {
+    "channel": {"enum": ["telegram", "slack"]},
+    "tenant_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "user_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "conversation_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "message_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "text": {"type": "string", "minLength": 1, "maxLength": 12000}
+  }
+}

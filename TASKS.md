@@ -1,64 +1,57 @@
-# Task tracker
+# Implementation plan
 
 Status values: `BACKLOG`, `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`.
 
-Agents must preserve task IDs, update status in place, and add evidence or a blocker
-before ending work. New work receives the next ID in the relevant area.
+This plan replaces the previous task history. Git history preserves completed
+work and failed experiments. Select the first `READY` task with complete
+dependencies. Mark it `IN_PROGRESS` before material work.
 
-## Milestone M0 — local Harness vertical slice
+## Phase 0 — freeze the replacement contract
 
-| ID | Status | Task | Acceptance criteria / evidence |
-|---|---|---|---|
-| CORE-001 | DONE | Define the `v1alpha1` YAML contract | Schema, sample spec, external prompt, and validator exist. YAML and JSON syntax were parsed locally. |
-| CORE-002 | DONE | Implement Harness Terraform module | Harness, execution role, Bedrock model configuration, outputs, and tool deny-by-default behavior are represented in HCL. Static formatting only; deployment verification is tracked separately. |
-| CORE-003 | DONE | Compose the dev unit with Terragrunt | Dev unit decodes YAML and resolves prompt content into module inputs. |
-| CLI-001 | DONE | Implement minimal streaming CLI | CLI supports stable local user ID, new sessions, quit, and Harness event-stream text output. Python syntax verified. |
-| TOOL-001 | DONE | Upgrade and verify local tools | Checked 2026-07-19: mise provides Terraform 1.15.8; Terragrunt 1.1.1 and AWS CLI 2.36.2 are installed. Terraform satisfies the `~> 1.15.0` constraint. |
-| TOOL-002 | DONE | Add a mise SSM environment plugin | Repository configuration maps Parameter Store SecureStrings to Terraform variables. Checked 2026-07-22 with a local mocked AWS CLI and a non-printing live SSM check: configured values load without caching or exposing values. |
-| TOOL-003 | DONE | Automate local mise plugin linking | Added `scripts/bootstrap_mise_plugins.sh`. Checked 2026-07-22: it force-links the checked-out extension from `/private/tmp`, `mise plugins ls` reports `aws-ssm`, and shell syntax/whitespace checks pass. |
-| DOC-001 | DONE | Clarify repository onboarding | Updated the root README with requirements, mise bootstrap, dynamic SSM behavior, validation, plan, apply, invocation, and OAuth boundaries. Checked 2026-07-22: shell syntax and whitespace checks pass. |
-| DOC-002 | DONE | Consolidate durable project documentation | Reduced project prose to README, design/principles, status, runbook, and task tracker; removed the docs index, OAuth spike, and six superseded ADRs; moved executable GitHub contracts to `contracts/github/`. Checked 2026-07-22: all 44 tests, contract validation, formatting, `git diff --check`, and stale-reference scan passed. |
-| TEST-001 | DONE | Run dependency-backed local validation | Checked 2026-07-19: installed dependencies in `.venv`; spec validation, CLI help, Python compilation, JSON parsing, Terraform formatting, and Terragrunt formatting passed. |
-| TF-001 | DONE | Initialize and validate the Harness unit | Checked 2026-07-19: `terragrunt init` selected hashicorp/aws 6.55.0; `terragrunt validate` passed with Terraform 1.15.8. |
-| TF-002 | DONE | Produce the first AWS plan | Checked 2026-07-19 with the default profile in us-east-1: 3 creates only—Harness, execution IAM role, and inline model-invocation policy; no replacements or exposed prompt content. |
-| TF-003 | DONE | Remove deprecated AWS region data-source attributes | Replaced all `data.aws_region.current.name` references with `.region`. Checked 2026-07-22: formatting/source scan passed, and the migrated Harness refresh-only plan read `data.aws_region.current` successfully with AWS provider 6.55.0 and no deprecation warning. |
-| AWS-001 | DONE | Deploy and invoke the basic Harness | User confirmed 2026-07-20 that the deployed Harness works with `moonshotai.kimi-k2.5` through Bedrock Mantle Chat Completions after applying the model/API-format and execution-policy changes. Depends on TF-002. |
+| ID | Status | Depends on | Task | Acceptance evidence |
+|---|---|---|---|---|
+| ARCH-001 | DONE | — | Review and reset the design | `docs/design.md`, `docs/status.md`, `docs/runbook.md`, README, and this plan agree on Harness + trusted adapters + IAM Gateway/Lambda + GitHub App installation identity. Official AWS, GitHub, Slack, and Telegram documentation reviewed 2026-07-24. All 55 unit tests, spec/contract validators, compilation, JSON parsing, direct formatting checks, and `git diff --check` passed. No external mutation. |
+| ARCH-002 | DONE | ARCH-001 | Freeze channel and GitHub tool contracts | Added strict schemas and checked-in fixtures for `ChannelMessage`, `getRepository`, `getFile`, and bounded read responses. Deterministic pseudonymous user/session IDs and six rejection/partitioning tests passed with `scripts/validate_contracts.py`; removed the superseded OAuth `GET /user` contract and validator. |
+| ARCH-003 | DONE | ARCH-001 | Prove provider 6.55 Lambda-target support | Added `tests/fixtures/terraform-lambda-target`: an `AWS_IAM` Gateway with `GATEWAY_IAM_ROLE`, Lambda target, and inline tool schema. With authorized network access, Terraform 1.15.8 initialized AWS provider 6.55.0 and `terraform validate` passed. No plan/apply. |
 
-## Milestone M1 — hardening the abstraction
+## Phase 1 — channel core and chat-only Harness
 
-| ID | Status | Task | Acceptance criteria / evidence |
-|---|---|---|---|
-| SPEC-001 | DONE | Add semantic tests for invalid specs | Checked 2026-07-19: six CLI-level tests pass for valid specs, unknown fields, bad ranges, escaping prompt paths, missing prompts, and unsupported engine/provider values. |
-| TG-001 | DONE | Add a local Telegram long-polling adapter | Checked 2026-07-19: private-chat parsing, `/start`, `/help`, `/new`, stable identity/session mapping, offset tracking, and 4,096-character reply splitting are implemented; five token-free adapter tests pass. No webhook or cloud deployment. |
-| TG-002 | DONE | Add Telegram adapter debug mode | Checked 2026-07-19: `--debug` logs Telegram requests/responses, updates, offsets, sessions, and Harness stream events to stderr without logging the bot token; all 11 offline tests pass. |
-| SPEC-002 | BACKLOG | Introduce normalized spec output | Compiler boundary is explicit and modules do not depend directly on raw YAML naming. |
-| IAM-001 | DONE | Scope Bedrock invocation resources | Updated to `moonshotai.kimi-k2.5` through Bedrock Mantle. Execution role grants Mantle metadata, model-constrained `CreateInference`, and `CallWithBearerToken`; `terragrunt validate` passed 2026-07-20. Live apply/invocation remains tracked by AWS-001. |
-| STATE-001 | DONE | Design remote-state bootstrap | Checked 2026-07-22: migrated `github-assistant` state to encrypted, versioned S3 key `dev/us-east-1/github-assistant/terraform.tfstate` with S3-native locking; remote-state plan succeeded. |
-| PLAT-001 | DONE | Separate shared platform components from agents | Implemented `platform/github-oauth` → `platform/github-gateway` → `agents/github-assistant`. Checked 2026-07-22: all 44 tests, formatting, contract validation, and source ownership passed. Split the versioned legacy state without recreating resources: OAuth state owns 1 provider, agent state owns 9 Harness/data/IAM/helper addresses, and legacy state is empty. OAuth and agent refresh-only applies each reported 0 added, 0 changed, 0 destroyed; OAuth and Harness are `READY`. |
-| CI-001 | BACKLOG | Add local/CI quality entry point | One command runs schema tests, Python checks, Terraform format/validate, and Terragrunt checks. |
+| ID | Status | Depends on | Task | Acceptance evidence |
+|---|---|---|---|---|
+| CHAN-001 | DONE | ARCH-002 | Extract a channel-neutral Harness client | Added `clients/channel/core.py`; Telegram is now transport-only and uses IAM Harness invocation. The Cognito link/token and JWT-header path was deleted from active clients. Offline tests cover stable pseudonymous identity, `/new`, duplicate messages, stream errors without provider details, allow-lists, empty replies, and chunking. Full 45-test suite, spec/contracts validation, Python compilation, JSON parsing, and `git diff --check` passed. |
+| HARNESS-001 | IN_PROGRESS | ARCH-003, CHAN-001 | Define a clean IAM chat-only Harness composition | New composition has model, prompt, limits, memory/session permissions, and no GitHub/OAuth/Token Vault permissions or tools. Validate and produce a reviewed create-only plan. Apply remains separately authorized. |
+| TG-001 | BACKLOG | CHAN-001, HARNESS-001 | Reconnect Telegram to the shared chat path | Private-chat allow-list, bot-derived identity, long polling, and IAM invocation are covered offline. Live `/new` plus reply requires explicit invocation authorization and is recorded separately. |
+| SLACK-001 | BACKLOG | CHAN-001, HARNESS-001 | Add Slack Socket Mode adapter | Manifest template uses minimal granular scopes. Direct messages only; workspace/user allow-list; bot/app tokens are environment references. Tests cover acknowledgement, retries, duplicate events, threads, bot-message loops, chunking, sanitization, and `/new`. |
+| CHAT-001 | BACKLOG | TG-001, SLACK-001 | Prove both chat transports | After explicit authorization, one Telegram user and one allowed Slack user each start a new session and receive a Harness response. Record redacted UTC/request IDs. No GitHub tool attached yet. |
 
-## Milestone M2 — read-only GitHub integration
+## Phase 2 — agent-owned GitHub read tools
 
-| ID | Status | Task | Acceptance criteria / evidence |
-|---|---|---|---|
-| GH-001 | BLOCKED | Prove Harness-to-Gateway user identity isolation | Depends on GH-010 and a supported Bearer JWT inbound identity path. Harness calls authenticated with IAM/SigV4 do not propagate per-user identity to Token Vault; the caller-supplied development `runtimeUserId` is insufficient. After JWT support exists, invoke with two fixed identities: authorize A only; A's `GET /user` returns A's GitHub login, while B receives a separate authorization URL and never A's data. Authorize B; B then returns B's login. Reinvoke A without consent to prove token reuse. Record UTC times, redacted event shapes, CloudTrail event/request IDs, and non-secret ARNs only. Never record authorization codes or tokens. |
-| GH-002 | DONE | Define the GitHub OAuth App scope | `docs/design.md` fixes the first slice to native `GithubOauth2`, authorization-code OAuth, scope `read:user`, and `GET /user` only. No `repo` scope or private-repository claim. Private source access remains blocked on a GitHub App/custom path. |
-| GH-003 | DONE | Add and register the OAuth credential provider | Terraform uses ephemeral variables and write-only arguments. User confirmed 2026-07-22 that the provider was applied and its generated callback URL was saved in the GitHub OAuth App. Live callback correctness remains part of GH-010/GH-001. |
-| GH-004 | DONE | Add the AgentCore Gateway module | Checked 2026-07-22: target-less MCP/IAM module, trusted-but-permissionless service role, tags, non-secret outputs, standalone dev Terragrunt composition, and provider lock added. Terraform formatting, Terragrunt HCL formatting, contract validation, 11 focused tests, `git diff --check`, and offline provider-backed `terragrunt validate --no-auto-init` passed. No target, network, or apply. |
-| GH-005 | DONE | Add the GitHub `GET /user` OpenAPI target | Implemented one `github-current-user` target with exactly `AUTHORIZATION_CODE`, `read:user`, and the frozen `GET /user` contract. On 2026-07-23, Gateway plan completed: 4 creates (Gateway, target, scoped role, policy), no changes or destroys. `terragrunt run --all -- plan` also completed; the unapplied Gateway's syntactically valid mock outputs are permitted only for agent `validate` and `plan`, never `apply`. No Gateway state/resource or apply yet. |
-| GH-006 | BACKLOG | Extend YAML schema for tools and outbound identity | Start only after GH-001. Add version-compatible declarative fields, normalization, semantic tests, and module inputs for the proven Gateway/tool contract. Provider ARNs, callback URLs, credentials, account IDs, and environment-specific return URLs stay outside YAML. |
-| GH-007 | IN_PROGRESS | Complete CLI OAuth experience | Implemented offline 2026-07-22: reusable `clients.oauth_events` parses only provisional project-owned app-defined envelopes (`type=authorization_required` with `authorization_url`, `type=authorization_pending`, `type=authorization_failed`); this is not claimed as a Harness schema and unknown/live shapes are ignored pending GH-010. The CLI prints each consent URL once in normal UX, gives authorize/return/retry instructions, preserves its stable `runtimeUserId` across `/new`, and replaces raw runtime/client exception payloads with fixed allow-listed summaries. Recursive diagnostics sanitization removes credential-like values and URL query/fragment data. 40 offline tests, contract validation, Python compilation, CLI help, Terraform/HCL formatting, and `git diff --check` passed. GH-010 must add the redacted live event shape; JWT inbound identity remains required before consent/isolation testing. |
-| GH-008 | DONE | Freeze the minimal GitHub integration contract | Checked 2026-07-22 offline: `scripts/validate_github_contract.py` passed; focused and full standard-library unittest coverage passed; `git diff --check` passed. Added the single-operation OpenAPI contract, exact OAuth/Gateway wiring contract, required non-secret return URL input reference, and rejection tests for path/method/server/operation/security/scope drift. No AWS or GitHub changes. |
-| GH-009 | IN_PROGRESS | Attach the Gateway tool to the Harness | Implemented offline 2026-07-22: one `github` `agentcore_gateway` tool consumes the shared `platform/github-gateway` outputs, uses `AUTHORIZATION_CODE`, the required post-consent URL, and exactly `read:user`. The allow-list is exactly `@github/getAuthenticatedUser`; the prompt forbids all other GitHub access. Harness IAM is limited to the selected Gateway plus the documented Token Vault/workload-identity/client-secret resource shapes. PLAT-001 reran all 44 tests, contract validation, and formatting successfully. Plan after the platform Gateway exists; IAM/SigV4 plus `runtimeUserId` cannot prove per-user OAuth isolation. No apply yet. |
-| GH-010 | BLOCKED | Deploy and smoke-test the minimal GitHub tool slice | Depends on GH-007, a supported Bearer JWT inbound identity path, and explicit apply authorization. Save a reviewed plan, verify no replacements or secret output, apply it, and confirm Gateway/target/Harness are READY. IAM/SigV4 Harness calls plus `runtimeUserId` cannot prove Token Vault per-user isolation. After JWT support exists, invoke user A once and capture the redacted authorization-required event shape as a regression fixture; complete consent and verify `GET /user` returns the expected login. This is a one-user smoke test, not identity-isolation proof. |
-| GH-011 | BLOCKED | Add Telegram OAuth UX | Depends on GH-001 and GH-007. Reuse the tested OAuth-event parser. In a private chat, send a clickable authorization link with no preview, explain that the user must return and retry, preserve the stable `telegram_identity`, and show safe pending/failed states. Tests cover URL handling, chunking, `/new`, and ensure bot token, OAuth code, access token, and raw stream events are never sent or logged. |
-| GH-012 | BLOCKED | Prove Telegram user-authorized GitHub access | Depends on GH-011 and explicit live-test authorization. From one private Telegram user, request GitHub identity, complete consent, retry, and verify the bot returns that user's GitHub login. A second Telegram user must receive separate consent and no first-user data. Record UTC times and redacted request/event IDs; then run all offline tests. |
+| ID | Status | Depends on | Task | Acceptance evidence |
+|---|---|---|---|---|
+| GHAPP-001 | BACKLOG | ARCH-002 | Define GitHub App operator contract | Document exact App permissions (`Contents: read`, metadata only), selected-repository installation, App/installation IDs, private-key rotation, pre-existing secret ARN, and rollback. No App/settings/secret creation. |
+| GHAPP-002 | BACKLOG | ARCH-002, ARCH-003, GHAPP-001 | Implement GitHub tool broker | Lambda validates tool/input/repository allow-list, creates short-lived installation tokens, calls fixed versioned GitHub endpoints with `User-Agent`, bounds output, and sanitizes errors/logs. Unit tests use HTTP/secret clients as fakes and verify no credential leakage. |
+| GATEWAY-001 | BACKLOG | ARCH-003, GHAPP-002 | Implement IAM Gateway and Lambda target | Separate module/composition owns one Gateway, scoped role, Lambda target/schema, Lambda permission, logs, and outputs. Provider-backed validation passes. Reviewed plan contains only expected creates and no secret values. |
+| HARNESS-002 | BACKLOG | HARNESS-001, GATEWAY-001 | Attach exact GitHub tools to Harness | Harness role can invoke one Gateway; `allowedTools` contains only `getRepository` and `getFile`; native OAuth and Token Vault permissions are absent. Offline tests, validation, and reviewed plan pass. |
+| GHAPP-003 | BLOCKED | GHAPP-001, GATEWAY-001, HARNESS-002 | Create/install App and deploy GitHub slice | Needs explicit authorization for GitHub settings, secret creation, Terraform apply, and live invocation. Verify selected repositories and read-only permissions before apply. |
+| E2E-001 | BLOCKED | CHAT-001, GHAPP-003 | Prove channel-to-GitHub read path | Telegram and Slack each retrieve one allowed repository/file through Harness. Disallowed repo, unsafe path/ref, unknown tool, mutation prompt, and oversized response fail safely. Record redacted evidence; no token or private content in logs. |
 
-## Milestone M3 — production-oriented controls
+## Phase 3 — hardening and cleanup
 
-| ID | Status | Task | Acceptance criteria / evidence |
-|---|---|---|---|
-| OPS-001 | BACKLOG | Add logs, traces, alarms, and retention | Operational signals and retention are declared and documented. |
-| MEM-001 | BACKLOG | Add optional AgentCore Memory | YAML actor/session semantics are defined and tested before enabling memory. |
-| SAFE-001 | BACKLOG | Design write-action confirmation | Any future GitHub mutation requires explicit confirmation, least privilege, and an audit trail. |
-| RUNTIME-001 | BACKLOG | Define the custom Runtime escape hatch | Add only after a concrete Harness limitation is demonstrated. |
+| ID | Status | Depends on | Task | Acceptance evidence |
+|---|---|---|---|---|
+| CI-001 | BACKLOG | ARCH-002 | Add one quality command | One command runs contracts, unit tests, Python compilation, Terraform format/validate, Terragrunt format, secret/stale-reference scans, and `git diff --check`. |
+| OPS-001 | BACKLOG | E2E-001 | Add production controls | Retention, metrics, alarms, tracing, rate/concurrency limits, retry budgets, GitHub rate-limit behavior, and safe audit fields are declared and tested. |
+| CLEAN-001 | BLOCKED | E2E-001 | Retire failed OAuth/JWT/Cognito experiment | Inventory deployed resources/state; produce per-unit destroy plans and source-removal diff. Requires explicit destroy authorization. Preserve versioned state history and remove no shared resource accidentally. |
+| DELEGATE-001 | BLOCKED | E2E-001 | Re-evaluate user-delegated GitHub | Start only with a fixed Harness 3LO release or explicit custom Runtime approval. Use GitHub App user tokens, not OAuth App `repo`; require two-user isolation, revocation, and no model-supplied identity. |
+| WRITE-001 | BLOCKED | OPS-001, DELEGATE-001 | Design GitHub mutations | Separate tools, least privilege, exact confirmation, idempotency, branch/PR-only initial scope, and immutable audit evidence. No default-branch writes. |
+
+## Stop conditions
+
+- No apply, destroy, state mutation, secret creation, GitHub/Slack settings
+  change, OAuth consent, or live channel invocation without explicit approval.
+- Do not implement user delegation inside a Lambda target by trusting tool
+  arguments for user identity.
+- Do not broaden GitHub permissions to OAuth `repo`, all repositories, or any
+  write permission.
+- Stop after one provider/network validation failure when the failure is
+  environmental; preserve the exact operator command.

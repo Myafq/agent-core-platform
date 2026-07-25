@@ -1,72 +1,59 @@
-import unittest
+"""Static contract tests for the Phase 1 IAM chat-only Harness."""
+
+from __future__ import annotations
+
 from pathlib import Path
+import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT / "modules" / "agentcore-harness"
 COMPOSITION = ROOT / "live" / "dev" / "us-east-1" / "agents" / "github-assistant" / "terragrunt.hcl"
-PROMPT = ROOT / "agents" / "github-assistant" / "prompts" / "system.md"
 
 
-class AgentCoreHarnessGitHubToolTests(unittest.TestCase):
-    def setUp(self):
+class AgentCoreHarnessChatOnlyTests(unittest.TestCase):
+    def setUp(self) -> None:
         self.main = (MODULE / "main.tf").read_text(encoding="utf-8")
         self.variables = (MODULE / "variables.tf").read_text(encoding="utf-8")
         self.composition = COMPOSITION.read_text(encoding="utf-8")
-        self.prompt = PROMPT.read_text(encoding="utf-8")
 
-    def test_exactly_one_github_gateway_tool_uses_the_existing_provider(self):
-        self.assertNotIn(
-            'resource "aws_bedrockagentcore_oauth2_credential_provider"', self.main
-        )
-        self.assertEqual(self.main.count('type = "agentcore_gateway"'), 1)
-        self.assertIn('name = "github"', self.main)
-        self.assertIn("gateway_arn = var.github_gateway_arn", self.main)
-        self.assertIn("provider_arn", self.main)
-        self.assertIn("var.github_oauth_provider_arn", self.main)
-        self.assertIn('grant_type', self.main)
-        self.assertIn('"AUTHORIZATION_CODE"', self.main)
-        self.assertIn("default_return_url = var.github_post_consent_return_url", self.main)
-        self.assertIn('scopes', self.main)
-        self.assertIn('["read:user"]', self.main)
-        self.assertIn("dependency.github_gateway.outputs.github_oauth_provider_arn", self.composition)
+    def test_composition_is_a_standalone_chat_only_harness(self) -> None:
+        self.assertIn('source = "../../../../../modules/agentcore-harness"', self.composition)
+        self.assertNotIn('dependency "', self.composition)
+        self.assertNotIn("gateway", self.composition.lower())
+        self.assertNotIn("oauth", self.composition.lower())
+        self.assertNotIn("jwt", self.composition.lower())
 
-    def test_allow_list_exposes_only_the_generated_current_user_operation(self):
-        self.assertIn('allowed_tools   = ["@github/getAuthenticatedUser"]', self.main)
-        self.assertNotIn("__no_tools_configured__", self.main)
-        self.assertNotIn('allowed_tools   = ["*"]', self.main)
+    def test_harness_has_model_prompt_limits_and_managed_memory(self) -> None:
+        self.assertIn('resource "aws_bedrockagentcore_harness" "this"', self.main)
+        self.assertIn("bedrock_model_config", self.main)
+        self.assertIn("system_prompt", self.main)
+        self.assertIn("max_iterations", self.main)
+        self.assertIn("max_tokens", self.main)
+        self.assertIn("timeout_seconds", self.main)
+        self.assertIn('sid = "HarnessManagedMemory"', self.main)
 
-    def test_execution_role_has_only_documented_gateway_oauth_permissions(self):
-        self.assertIn('sid       = "InvokeGitHubGateway"', self.main)
-        self.assertIn('actions   = ["bedrock-agentcore:InvokeGateway"]', self.main)
-        self.assertIn("resources = [var.github_gateway_arn]", self.main)
-        self.assertIn('actions = ["bedrock-agentcore:GetResourceOauth2Token"]', self.main)
-        self.assertIn('var.github_oauth_provider_arn', self.main)
-        self.assertIn('"secretsmanager:GetSecretValue"', self.main)
-        self.assertIn('resources = [var.github_client_secret_arn]', self.main)
-
-    def test_composition_depends_only_on_the_shared_gateway_unit(self):
-        self.assertIn('github_gateway_arn', self.composition)
-        self.assertIn('dependency "github_gateway"', self.composition)
-        self.assertIn('config_path = "../../platform/github-gateway"', self.composition)
-        self.assertIn('dependency.github_gateway.outputs.gateway_arn', self.composition)
-        self.assertIn('github_post_consent_return_url', self.composition)
-        self.assertIn('get_env("GITHUB_POST_CONSENT_RETURN_URL")', self.composition)
-        self.assertIn('variable "github_gateway_arn"', self.variables)
-        self.assertNotIn('GITHUB_GATEWAY_ARN', self.composition)
-
-    def test_prompt_restricts_github_to_authenticated_current_user(self):
-        self.assertIn("authenticated user's", self.prompt)
-        self.assertIn("identity", self.prompt)
-        for prohibited in (
-            "repositories",
-            "issues",
-            "pull requests",
-            "arbitrary URLs",
-            "mutations",
-            "private-source access",
+    def test_execution_role_and_harness_have_no_disabled_capabilities(self) -> None:
+        for forbidden in (
+            "agentcore_gateway",
+            "InvokeGateway",
+            "GetResourceOauth2Token",
+            "GetWorkloadAccessToken",
+            "secretsmanager:GetSecretValue",
+            "BrowserSession",
+            "CodeInterpreter",
+            "authorizer_configuration",
+            "custom_jwt_authorizer",
+            "oauth",
+            "token-vault",
         ):
-            self.assertIn(prohibited, self.prompt)
+            self.assertNotIn(forbidden.lower(), self.main.lower())
+            self.assertNotIn(forbidden.lower(), self.variables.lower())
+
+    def test_api_format_workaround_remains_explicit(self) -> None:
+        self.assertIn('resource "terraform_data" "model_api_format"', self.main)
+        self.assertIn("update-harness", self.main)
+        self.assertIn("apiFormat", self.main)
 
 
 if __name__ == "__main__":

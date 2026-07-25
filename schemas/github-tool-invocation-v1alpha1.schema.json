@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/github-tool-invocation-v1alpha1.schema.json",
+  "title": "GitHub read tool invocation v1alpha1",
+  "oneOf": [
+    {"$ref": "#/$defs/getRepository"},
+    {"$ref": "#/$defs/getFile"}
+  ],
+  "$defs": {
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$"
+    },
+    "getRepository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool", "arguments"],
+      "properties": {
+        "tool": {"const": "getRepository"},
+        "arguments": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["owner", "repo"],
+          "properties": {
+            "owner": {"$ref": "#/$defs/repository"},
+            "repo": {"$ref": "#/$defs/repository"}
+          }
+        }
+      }
+    },
+    "getFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool", "arguments"],
+      "properties": {
+        "tool": {"const": "getFile"},
+        "arguments": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["owner", "repo", "path"],
+          "properties": {
+            "owner": {"$ref": "#/$defs/repository"},
+            "repo": {"$ref": "#/$defs/repository"},
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024,
+              "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9._/-]+$"
+            },
+            "ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255,
+              "pattern": "^(?!/)(?!.*//)(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9._/-]*$"
+            }
+          }
+        }
+      }
+    }
+  }
+}

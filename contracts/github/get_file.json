@@ -1,0 +1,9 @@
+{
+  "tool": "getFile",
+  "arguments": {
+    "owner": "example-org",
+    "repo": "example-repo",
+    "path": "README.md",
+    "ref": "main"
+  }
+}
