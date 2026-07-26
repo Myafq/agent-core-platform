@@ -40,9 +40,10 @@ class AgentCoreHarnessChatOnlyTests(unittest.TestCase):
         self.assertIn('sid       = "InvokeConfiguredBedrockModelStream"', self.main)
         self.assertIn('actions   = ["bedrock:InvokeModelWithResponseStream"]', self.main)
         self.assertIn("resources = local.bedrock_invocation_resources", self.main)
-        self.assertIn('regex("^us\\\\.", var.model_id)', self.main)
+        self.assertIn('startswith(var.model_id, "us.")', self.main)
+        self.assertIn('startswith(var.model_id, "global.")', self.main)
         self.assertIn('inference-profile/${var.model_id}', self.main)
-        self.assertIn('"us-east-1", "us-east-2", "us-west-2"', self.main)
+        self.assertIn('bedrock:*::foundation-model/${local.foundation_model_id}', self.main)
 
     def test_harness_attaches_only_the_iam_github_read_gateway_tools(self) -> None:
         self.assertIn('sid       = "InvokeGitHubReadGateway"', self.main)
@@ -82,6 +83,7 @@ class AgentCoreHarnessChatOnlyTests(unittest.TestCase):
         self.assertIn('resource "terraform_data" "model_api_format"', self.main)
         self.assertIn("update-harness", self.main)
         self.assertIn("apiFormat", self.main)
+        self.assertIn("var.top_p == null ? {} : { topP = var.top_p }", self.main)
 
 
 if __name__ == "__main__":

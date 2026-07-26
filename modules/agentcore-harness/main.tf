@@ -1,13 +1,18 @@
 locals {
-  harness_name            = replace(var.name, "-", "_")
-  harness_memory_arn      = "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:memory/harness_${local.harness_name}_*"
-  is_us_inference_profile = can(regex("^us\\.", var.model_id))
-  foundation_model_id     = local.is_us_inference_profile ? replace(var.model_id, "us.", "") : var.model_id
+  harness_name                = replace(var.name, "-", "_")
+  harness_memory_arn          = "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:memory/harness_${local.harness_name}_*"
+  is_us_inference_profile     = startswith(var.model_id, "us.")
+  is_global_inference_profile = startswith(var.model_id, "global.")
+  is_inference_profile        = local.is_us_inference_profile || local.is_global_inference_profile
+  foundation_model_id         = local.is_inference_profile ? join(".", slice(split(".", var.model_id), 1, length(split(".", var.model_id)))) : var.model_id
   bedrock_model_arns = local.is_us_inference_profile ? [
     for region in ["us-east-1", "us-east-2", "us-west-2"] :
     "arn:${data.aws_partition.current.partition}:bedrock:${region}::foundation-model/${local.foundation_model_id}"
+    ] : local.is_global_inference_profile ? [
+    "arn:${data.aws_partition.current.partition}:bedrock:*::foundation-model/${local.foundation_model_id}",
+    "arn:${data.aws_partition.current.partition}:bedrock:${data.aws_region.current.region}::foundation-model/${local.foundation_model_id}",
   ] : ["arn:${data.aws_partition.current.partition}:bedrock:${data.aws_region.current.region}::foundation-model/${var.model_id}"]
-  bedrock_inference_profile_arn = local.is_us_inference_profile ? "arn:${data.aws_partition.current.partition}:bedrock:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:inference-profile/${var.model_id}" : null
+  bedrock_inference_profile_arn = local.is_inference_profile ? "arn:${data.aws_partition.current.partition}:bedrock:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:inference-profile/${var.model_id}" : null
   bedrock_invocation_resources  = concat(local.bedrock_model_arns, local.bedrock_inference_profile_arn == null ? [] : [local.bedrock_inference_profile_arn])
   common_tags = merge(var.tags, {
     Agent       = var.name
@@ -202,6 +207,6 @@ resource "terraform_data" "model_api_format" {
   }
 
   provisioner "local-exec" {
-    command = "aws bedrock-agentcore-control update-harness --region '${data.aws_region.current.region}' --harness-id '${split("/", aws_bedrockagentcore_harness.this.arn)[1]}' --model '${jsonencode({ bedrockModelConfig = { modelId = var.model_id, apiFormat = var.api_format, maxTokens = var.max_tokens, temperature = var.temperature, topP = var.top_p } })}'"
+    command = "aws bedrock-agentcore-control update-harness --region '${data.aws_region.current.region}' --harness-id '${split("/", aws_bedrockagentcore_harness.this.arn)[1]}' --model '${jsonencode({ bedrockModelConfig = merge({ modelId = var.model_id, apiFormat = var.api_format, maxTokens = var.max_tokens, temperature = var.temperature }, var.top_p == null ? {} : { topP = var.top_p }) })}'"
   }
 }

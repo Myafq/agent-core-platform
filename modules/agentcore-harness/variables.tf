@@ -36,8 +36,9 @@ variable "temperature" {
 }
 
 variable "top_p" {
-  type    = number
-  default = 0.9
+  type     = number
+  default  = null
+  nullable = true
 }
 
 variable "system_prompt" {

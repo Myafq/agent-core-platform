@@ -1,6 +1,6 @@
 # Current status
 
-Last updated: 2026-07-25
+Last updated: 2026-07-26
 
 ## Design decision
 
@@ -78,26 +78,33 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   Lambda, secret, GitHub App, or cloud resource was created.
 - The operator applied `GATEWAY-001` on 2026-07-25. Read-only checks found
   Gateway `github-app-tool-nckdlx01xy` and Lambda `github-app-tool`; Lambda is
-  `Active` and its last update is `Successful`. No broker or Gateway tool
-  invocation has run. AWS Lambda-target documentation showed that the Gateway
-  passes tool arguments as the event and the tool name in client context; source
-  now adapts that contract, pending package and platform update.
-- `HARNESS-002` reached Harness version 4 and `READY`: one `github-read`
+  `Active`, its last update is `Successful`, and the corrected Gateway
+  client-context adapter was deployed at 2026-07-26T03:45:25Z. No broker or
+  Gateway tool invocation has succeeded.
+- `HARNESS-002` is Harness version 12 and `READY`. Its single `github-read`
   Gateway tool uses AWS IAM and `allowedTools` contains only
-  `@github-read/getRepository` and `@github-read/getFile`. Its deployed prompt
-  was still chat-only; source now corrects it, pending a separate reviewed
-  Harness update.
+  `@github-read/listRepositories`, `@github-read/getRepository`, and
+  `@github-read/getFile`. Its deployed model is
+  `global.anthropic.claude-sonnet-4-6` with `converse_stream` and a scoped
+  standard Bedrock streaming policy. A live Harness attempt reached Sonnet but
+  failed before Gateway because the model rejects requests that specify both
+  `temperature` and `top_p`. The reviewed repair applied: the deployed model
+  has `temperature: 0.2` and no `topP`.
+- The `global.anthropic.claude-sonnet-4-6` system inference profile is `ACTIVE`.
+  A minimal direct Bedrock Converse request succeeded (12 input and 4 output
+  tokens). Source now uses its native `converse_stream` format and scopes the
+  Harness role to the profile plus its cross-region and `us-east-1` backing
+  model ARNs. The reviewed replacement plan then applied in place. The first
+  apply stopped before a Harness change because IAM rejected a regionless ARN;
+  the corrected policy uses a valid cross-region wildcard ARN.
 - `TG-001` is in progress. The Telegram adapter is transport-only: private
   text parsing, bot-derived tenant identity, configured-user allow-list,
   long-polling offsets, and shared IAM Harness invocation are present in source.
   Starting it requires a supplied bot token, one numeric Telegram user ID, and
   explicit authorization for live polling and invocation.
-- The first restricted Telegram poll reached Harness streaming. Kimi's
-  `chat_completions` path emitted raw tool-call protocol text instead of
-  executing the configured Gateway tool. Source now selects Nova 2 Lite's
-  native `converse_stream` path through the active US inference profile
-  `us.amazon.nova-2-lite-v1:0`; IAM is limited to that profile and its three
-  documented backing foundation models. Pending reviewed apply and retry.
+- Kimi's `chat_completions` tool-call protocol incompatibility remains known.
+  The pending Sonnet change uses native `converse_stream`; a restricted tool
+  retry remains required after apply.
 
 ## Not verified
 
@@ -129,9 +136,9 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   in-place updates; post-apply `get-harness` reported `READY`, version 3, no
   tools/skills, `allowedTools: ["@disabled"]`, and the chat-only prompt. The
   follow-up plan was no-change.
-- An IAM chat-only Harness is deployed and `READY`; it has no configured
-  tools/skills and its allow-list is `@disabled`. No channel invocation proof
-  exists yet.
+- The active IAM Harness is version 9 and `READY`; it has one IAM GitHub
+  Gateway tool and the three reviewed read-only operations. No successful
+  channel-to-Gateway invocation proof exists yet.
 - No end-to-end Telegram/Slack-to-GitHub invocation has succeeded.
 - No cloud, GitHub, Slack, or Telegram settings were changed during this review.
 
@@ -147,7 +154,5 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
 
 ## Next
 
-Next: review and apply the Nova 2 Lite model/profile change. Restart the
-Telegram adapter restricted to user `111436346`, prove `/new` and one reply,
-then stop it and record the redacted request ID. No channel invocation beyond
-that one-user smoke test is authorized.
+Next: make one restricted tool retry. Do not claim GitHub tool execution unless
+it succeeds.

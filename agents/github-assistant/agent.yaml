@@ -13,10 +13,9 @@ spec:
 
   model:
     provider: bedrock
-    id: us.amazon.nova-2-lite-v1:0
+    id: global.anthropic.claude-sonnet-4-6
     apiFormat: converse_stream
     temperature: 0.2
-    topP: 0.9
 
   instructions:
     system:
