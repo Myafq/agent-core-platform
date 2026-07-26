@@ -2,6 +2,15 @@ include "root" { path = find_in_parent_folders("root.hcl") }
 
 terraform { source = "../../../../../modules/agentcore-harness" }
 
+dependency "github_app_tool" {
+  config_path = "../../platform/github-app-tool"
+
+  mock_outputs_allowed_terraform_commands = ["validate"]
+  mock_outputs = {
+    gateway_arn = "arn:aws:bedrock-agentcore:us-east-1:000000000000:gateway/github-app-tool"
+  }
+}
+
 locals {
   agent_directory = "${get_terragrunt_dir()}/../../../../../agents/github-assistant"
   agent_spec      = yamldecode(file("${local.agent_directory}/agent.yaml"))
@@ -19,4 +28,5 @@ inputs = {
   max_iterations  = local.agent_spec.spec.limits.maxIterations
   max_tokens      = local.agent_spec.spec.limits.maxTokens
   timeout_seconds = local.agent_spec.spec.limits.timeoutSeconds
+  gateway_arn     = dependency.github_app_tool.outputs.gateway_arn
 }

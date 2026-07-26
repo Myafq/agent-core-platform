@@ -20,9 +20,10 @@ from contracts.contract_validation import (  # noqa: E402
 def main() -> int:
     contracts = ROOT / "contracts"
     validate_channel_message(load_json(contracts / "channel_message.json"))
-    allowed = {"example-org/example-repo"}
-    validate_tool_invocation(load_json(contracts / "github" / "get_repository.json"), allowed)
-    validate_tool_invocation(load_json(contracts / "github" / "get_file.json"), allowed)
+    validate_tool_invocation(load_json(contracts / "github" / "list_repositories.json"))
+    validate_tool_invocation(load_json(contracts / "github" / "get_repository.json"))
+    validate_tool_invocation(load_json(contracts / "github" / "get_file.json"))
+    validate_tool_response(load_json(contracts / "github" / "list_repositories_response.json"))
     validate_tool_response(load_json(contracts / "github" / "get_file_response.json"))
     print("Channel and GitHub tool contracts are valid")
     return 0

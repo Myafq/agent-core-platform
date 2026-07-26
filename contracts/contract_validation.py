@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from jsonschema import Draft202012Validator
 
@@ -52,12 +52,8 @@ def validate_channel_message(message: dict[str, Any]) -> None:
     _validate(message, "channel-message-v1alpha1.schema.json")
 
 
-def validate_tool_invocation(invocation: dict[str, Any], allowed_repositories: Iterable[str]) -> None:
+def validate_tool_invocation(invocation: dict[str, Any]) -> None:
     _validate(invocation, "github-tool-invocation-v1alpha1.schema.json")
-    arguments = invocation["arguments"]
-    repository = f"{arguments['owner']}/{arguments['repo']}"
-    if repository not in set(allowed_repositories):
-        raise ContractError("repository is not allowed")
 
 
 def validate_tool_response(response: dict[str, Any]) -> None:

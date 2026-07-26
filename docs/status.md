@@ -1,6 +1,6 @@
 # Current status
 
-Last updated: 2026-07-24
+Last updated: 2026-07-25
 
 ## Design decision
 
@@ -64,14 +64,52 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   formatting, and `git diff --check` passed. The obsolete OAuth `GET /user`
   contract and validator were removed. Terragrunt remains unavailable after
   the mise SSM environment hook failed before tool startup.
+- GHAPP-001 defines the GitHub App operator contract: selected repositories
+  only; `Contents: Read-only`; no organization/account permissions or
+  webhooks; numeric App/installation IDs; a pre-existing private-key secret
+  ARN; staged key rotation and rollback. No App, installation, secret, or
+  cloud configuration was created or changed.
+- GHAPP-002 is implemented offline in `services/github_tool`: `listRepositories`
+  reads the App installation's current selected repositories with a bounded
+  installation-token request; additions/removals need no Lambda or Harness
+  update. The two repository-read tools create per-request narrowed installation
+  tokens and call fixed GitHub REST endpoints. All responses are normalized and
+  errors safely classified. Fake-client tests verify no credential leakage. No
+  Lambda, secret, GitHub App, or cloud resource was created.
+- The operator applied `GATEWAY-001` on 2026-07-25. Read-only checks found
+  Gateway `github-app-tool-nckdlx01xy` and Lambda `github-app-tool`; Lambda is
+  `Active` and its last update is `Successful`. No broker or Gateway tool
+  invocation has run. AWS Lambda-target documentation showed that the Gateway
+  passes tool arguments as the event and the tool name in client context; source
+  now adapts that contract, pending package and platform update.
+- `HARNESS-002` reached Harness version 4 and `READY`: one `github-read`
+  Gateway tool uses AWS IAM and `allowedTools` contains only
+  `@github-read/getRepository` and `@github-read/getFile`. Its deployed prompt
+  was still chat-only; source now corrects it, pending a separate reviewed
+  Harness update.
+- `TG-001` is in progress. The Telegram adapter is transport-only: private
+  text parsing, bot-derived tenant identity, configured-user allow-list,
+  long-polling offsets, and shared IAM Harness invocation are present in source.
+  Starting it requires a supplied bot token, one numeric Telegram user ID, and
+  explicit authorization for live polling and invocation.
+- The first restricted Telegram poll reached Harness streaming. Kimi's
+  `chat_completions` path emitted raw tool-call protocol text instead of
+  executing the configured Gateway tool. Source now selects Nova 2 Lite's
+  native `converse_stream` path through the active US inference profile
+  `us.amazon.nova-2-lite-v1:0`; IAM is limited to that profile and its three
+  documented backing foundation models. Pending reviewed apply and retry.
 
 ## Not verified
 
 - No Slack adapter exists.
-- No shared channel core exists.
-- No GitHub App, installation, private-key secret, Lambda broker, or Lambda
-  Gateway target exists in source.
-- No Terraform plan exists for the replacement architecture.
+- No GitHub broker or Gateway tool invocation has succeeded. The GitHub App,
+  selected installation, secret binding, and exact repository scope still need
+  live verification before any read test.
+- No Terraform plan exists for the replacement architecture. Direct
+  Terragrunt init for `platform/github-app-tool` passed on 2026-07-25, but its
+  provider-backed validate did not start because the local AWS provider 6.55.0
+  exited before schema negotiation. Harness validation remains pending on the
+  same local provider issue.
 - ARCH-003 provider proof passed 2026-07-24: the minimal `AWS_IAM`
   Gateway/Lambda-target fixture initialized AWS provider 6.55.0 and passed
   `terraform validate`. It uses `GATEWAY_IAM_ROLE`, a Lambda ARN, and an inline
@@ -84,13 +122,16 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   and JWT-header invocation code was removed. All 25 remaining unit tests,
   spec/contracts validation, Python compilation, JSON parsing, and
   `git diff --check` passed.
-- HARNESS-001 source is a standalone IAM chat-only composition. It has only
-  model, prompt, limits, managed memory/session, and observability permissions;
-  GitHub Gateway, OAuth, Token Vault, JWT, browser, and code-interpreter code
-  was removed. Static formatting and tests passed. Its Terragrunt init/validate/
-  plan attempt was blocked before startup by the mise AWS SSM hook failing to
-  reach `https://ssm.us-east-1.amazonaws.com/`; no plan was generated.
-- No replacement IAM Harness is deployed.
+- HARNESS-001 declares a standalone IAM chat-only composition with a
+  deny-by-default tool allow-list. GitHub Gateway, OAuth, Token Vault, JWT,
+  browser, and code-interpreter code is absent. Authorized network validation
+  on 2026-07-25 passed init/validate. The operator applied the reviewed two
+  in-place updates; post-apply `get-harness` reported `READY`, version 3, no
+  tools/skills, `allowedTools: ["@disabled"]`, and the chat-only prompt. The
+  follow-up plan was no-change.
+- An IAM chat-only Harness is deployed and `READY`; it has no configured
+  tools/skills and its allow-list is `@disabled`. No channel invocation proof
+  exists yet.
 - No end-to-end Telegram/Slack-to-GitHub invocation has succeeded.
 - No cloud, GitHub, Slack, or Telegram settings were changed during this review.
 
@@ -106,5 +147,7 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
 
 ## Next
 
-Next: restore AWS/SSM connectivity, then rerun the HARNESS-001 create-only
-Terragrunt init/validate/plan commands. No apply is authorized.
+Next: review and apply the Nova 2 Lite model/profile change. Restart the
+Telegram adapter restricted to user `111436346`, prove `/new` and one reply,
+then stop it and record the redacted request ID. No channel invocation beyond
+that one-user smoke test is authorized.

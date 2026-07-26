@@ -27,8 +27,9 @@ class ContractValidationTests(unittest.TestCase):
         self.channel_message = load_json(ROOT / "contracts" / "channel_message.json")
         self.get_repository = load_json(ROOT / "contracts" / "github" / "get_repository.json")
         self.get_file = load_json(ROOT / "contracts" / "github" / "get_file.json")
+        self.list_repositories = load_json(ROOT / "contracts" / "github" / "list_repositories.json")
+        self.list_repositories_response = load_json(ROOT / "contracts" / "github" / "list_repositories_response.json")
         self.get_file_response = load_json(ROOT / "contracts" / "github" / "get_file_response.json")
-        self.allowed = {"example-org/example-repo"}
 
     def test_channel_message_and_identity_are_stable_and_partitioned(self) -> None:
         self.assertEqual(runtime_user_id(self.channel_message), runtime_user_id(self.channel_message))
@@ -45,32 +46,34 @@ class ContractValidationTests(unittest.TestCase):
             validate_channel_message(message)
 
     def test_tool_invocations_accept_only_reviewed_read_tools(self) -> None:
-        validate_tool_invocation(self.get_repository, self.allowed)
-        validate_tool_invocation(self.get_file, self.allowed)
+        validate_tool_invocation(self.list_repositories)
+        validate_tool_invocation(self.get_repository)
+        validate_tool_invocation(self.get_file)
         unknown = copy.deepcopy(self.get_file)
         unknown["tool"] = "deleteRepository"
         with self.assertRaises(ContractError):
-            validate_tool_invocation(unknown, self.allowed)
+            validate_tool_invocation(unknown)
 
     def test_tool_invocations_reject_transport_and_mutation_inputs(self) -> None:
         for field in ("url", "method", "headers", "body"):
             invocation = copy.deepcopy(self.get_file)
             invocation["arguments"][field] = "untrusted"
             with self.subTest(field=field), self.assertRaises(ContractError):
-                validate_tool_invocation(invocation, self.allowed)
+                validate_tool_invocation(invocation)
 
-    def test_tool_invocations_reject_unconfigured_repository_and_unsafe_path_or_ref(self) -> None:
-        unconfigured = copy.deepcopy(self.get_file)
-        unconfigured["arguments"]["repo"] = "other-repo"
-        with self.assertRaisesRegex(ContractError, "not allowed"):
-            validate_tool_invocation(unconfigured, self.allowed)
+    def test_tool_invocations_reject_unsafe_path_or_ref(self) -> None:
         for field, value in (("path", "../secret"), ("path", "/etc/passwd"), ("ref", "../main"), ("ref", "main//next")):
             invocation = copy.deepcopy(self.get_file)
             invocation["arguments"][field] = value
             with self.subTest(field=field, value=value), self.assertRaises(ContractError):
-                validate_tool_invocation(invocation, self.allowed)
+                validate_tool_invocation(invocation)
 
     def test_tool_response_rejects_unknown_and_oversized_content(self) -> None:
+        validate_tool_response(self.list_repositories_response)
+        response = copy.deepcopy(self.list_repositories_response)
+        response["repositories"][0]["token"] = "secret"
+        with self.assertRaises(ContractError):
+            validate_tool_response(response)
         response = copy.deepcopy(self.get_file_response)
         response["file"]["token"] = "secret"
         with self.assertRaises(ContractError):

@@ -145,17 +145,18 @@ Initial tools:
 
 | Tool | Inputs | Enforced boundary |
 |---|---|---|
-| `getRepository` | owner, repo | installed and configured repository only |
-| `getFile` | owner, repo, path, optional ref | read-only contents; size and binary limits |
+| `listRepositories` | optional page | reads the current selected repositories from the GitHub App installation; 100 results per bounded page |
+| `getRepository` | owner, repo | GitHub validates the repository against the current installation; token is narrowed to that repository |
+| `getFile` | owner, repo, path, optional ref | current-installation repository only; size and binary limits |
 
-Add pull-request or issue reads only after the first two tools pass live
+Add pull-request or issue reads only after these tools pass live
 validation. No arbitrary URL, GraphQL document, HTTP method, header, shell
 command, repository wildcard, or mutation input.
 
 The Lambda:
 
 1. validates the Gateway tool name and JSON input;
-2. checks owner/repo against an environment-owned allow-list;
+2. uses an installation token to list the App's current selected repositories, or requests a per-repository narrowed token for a read;
 3. reads the GitHub App private key from a referenced secret;
 4. creates a short-lived App JWT;
 5. requests an installation token narrowed to the required repository and
@@ -184,6 +185,39 @@ MVP permissions:
 The App ID and installation ID are non-secret configuration. The private key is
 a secret. Terraform consumes only its secret ARN; secret material must not
 enter Terraform state.
+
+#### Operator contract
+
+Create and install the App only after GHAPP-003 is explicitly authorized. Its
+registration and each installation must meet all of these conditions:
+
+| Item | Required value or action |
+|---|---|
+| Repository permissions | `Contents: Read-only` only. Repository metadata is the GitHub implicit read capability; request no additional repository permission. |
+| Organization and account permissions | None. |
+| Webhooks | Inactive; subscribe to no events. |
+| Installation scope | `Only select repositories`. This live GitHub installation selection is the repository boundary; do not duplicate it in Lambda configuration or select all repositories. |
+| App identity | Record the numeric App ID as `GITHUB_APP_ID`; do not substitute the client ID. |
+| Installation identity | Record the numeric selected-repository installation ID as `GITHUB_APP_INSTALLATION_ID`. Verify it belongs to the expected owner and contains only the selected repositories. |
+| Private key | Generate an App private key outside Terraform. Store its material in a pre-existing Secrets Manager secret. Provide only that secret ARN as `GITHUB_APP_PRIVATE_KEY_SECRET_ARN`; never place key material in variables, plans, state, logs, or source. |
+
+The broker will mint a fresh installation token per request. Repository reads
+are narrowed to the requested repository and `contents: read`; repository
+listing uses the installation's current selected-repository scope. Installation tokens expire
+after one hour; do not validate their shape or length.
+
+Rotation is an operator change: add the replacement private key to the
+pre-existing secret, validate a staged deployment can read with the new key,
+then revoke the old GitHub App key. Preserve the secret ARN. If validation
+fails, restore the previous secret version before revoking anything. Do not
+disable the installation or broaden permissions as a rotation workaround.
+
+Rollback means stop the GitHub slice, remove the Lambda's permission to read
+the private-key secret or roll back to the prior validated Lambda version, and
+revoke the affected App key if compromise is suspected. Do not delete the App,
+installation, secret, or Terraform state as an incident shortcut. Re-enable
+only after the selected-repository scope, read-only permissions, and secret
+access boundary are re-verified.
 
 ## User-delegated GitHub
 
@@ -226,7 +260,7 @@ history is not a runtime dependency.
 ## Safety
 
 - Read-only GitHub first.
-- Repository allow-list enforced in Lambda, not only in the prompt.
+- Repository boundary enforced by GitHub App installation scope, not only in the prompt.
 - Exact Harness `allowedTools`.
 - Bounded inputs and outputs.
 - Deny raw URLs, arbitrary refs where policy requires a fixed branch, and path

@@ -58,6 +58,13 @@ variable "timeout_seconds" {
   type = number
 }
 
+variable "gateway_arn" {
+  description = "Optional single AgentCore Gateway ARN serving the reviewed GitHub read tools."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

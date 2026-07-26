@@ -31,6 +31,13 @@ class TelegramBotTests(unittest.TestCase):
         source = (Path(__file__).parents[1] / "clients" / "telegram" / "bot.py").read_text(encoding="utf-8")
         self.assertIn('logging.getLogger("botocore").setLevel(logging.WARNING)', source)
 
+    def test_debug_logging_does_not_include_payload_or_transport_error_details(self) -> None:
+        source = (Path(__file__).parents[1] / "clients" / "telegram" / "bot.py").read_text(encoding="utf-8")
+        self.assertIn('LOGGER.debug("Telegram poll updates=%s", len(updates))', source)
+        self.assertIn('LOGGER.debug("Telegram private text accepted")', source)
+        self.assertNotIn('failed: {error}', source)
+        self.assertNotIn('result.get(\'description\'', source)
+
 
 if __name__ == "__main__":
     unittest.main()

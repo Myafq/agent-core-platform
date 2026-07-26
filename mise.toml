@@ -1,0 +1,12 @@
+[env]
+_.aws-ssm = {
+  tools = true,
+  parameters = {
+    LEGACY_GITHUB_APP_CLIENT_ID     = "/gh-agent/gh-app-client-id",
+    LEGACY_GITHUB_APP_CLIENT_SECRET = "/gh-agent/gh-app-client-secret",
+  },
+}
+GITHUB_APP_ID = "4394936"
+GITHUB_APP_INSTALLATION_ID = "149043153"
+GITHUB_APP_PRIVATE_KEY_SECRET_ARN = "arn:aws:secretsmanager:us-east-1:803629127460:secret:/gh-app/private-key-ET4rqz"
+GITHUB_APP_PRIVATE_KEY_SECRET_KEY = "agent.pem"

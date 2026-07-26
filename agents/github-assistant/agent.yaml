@@ -3,7 +3,7 @@ kind: Agent
 
 metadata:
   name: github-assistant
-  description: A terminal assistant that will gain read-only GitHub tools.
+  description: A concise terminal assistant with bounded read-only GitHub tools.
   tags:
     Project: agentcore-yaml-lab
 
@@ -13,8 +13,8 @@ spec:
 
   model:
     provider: bedrock
-    id: moonshotai.kimi-k2.5
-    apiFormat: chat_completions
+    id: us.amazon.nova-2-lite-v1:0
+    apiFormat: converse_stream
     temperature: 0.2
     topP: 0.9
 

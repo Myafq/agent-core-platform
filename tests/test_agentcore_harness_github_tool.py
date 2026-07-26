@@ -1,4 +1,4 @@
-"""Static contract tests for the Phase 1 IAM chat-only Harness."""
+"""Static contract tests for the IAM Harness GitHub Gateway attachment."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT / "modules" / "agentcore-harness"
 COMPOSITION = ROOT / "live" / "dev" / "us-east-1" / "agents" / "github-assistant" / "terragrunt.hcl"
+PROMPT = ROOT / "agents" / "github-assistant" / "prompts" / "system.md"
 
 
 class AgentCoreHarnessChatOnlyTests(unittest.TestCase):
@@ -16,11 +17,13 @@ class AgentCoreHarnessChatOnlyTests(unittest.TestCase):
         self.main = (MODULE / "main.tf").read_text(encoding="utf-8")
         self.variables = (MODULE / "variables.tf").read_text(encoding="utf-8")
         self.composition = COMPOSITION.read_text(encoding="utf-8")
+        self.prompt = PROMPT.read_text(encoding="utf-8")
 
-    def test_composition_is_a_standalone_chat_only_harness(self) -> None:
+    def test_composition_consumes_only_the_platform_gateway_output(self) -> None:
         self.assertIn('source = "../../../../../modules/agentcore-harness"', self.composition)
-        self.assertNotIn('dependency "', self.composition)
-        self.assertNotIn("gateway", self.composition.lower())
+        self.assertIn('dependency "github_app_tool"', self.composition)
+        self.assertIn('config_path = "../../platform/github-app-tool"', self.composition)
+        self.assertIn("gateway_arn     = dependency.github_app_tool.outputs.gateway_arn", self.composition)
         self.assertNotIn("oauth", self.composition.lower())
         self.assertNotIn("jwt", self.composition.lower())
 
@@ -33,10 +36,35 @@ class AgentCoreHarnessChatOnlyTests(unittest.TestCase):
         self.assertIn("timeout_seconds", self.main)
         self.assertIn('sid = "HarnessManagedMemory"', self.main)
 
-    def test_execution_role_and_harness_have_no_disabled_capabilities(self) -> None:
+    def test_execution_role_streams_only_the_configured_bedrock_model_or_profile(self) -> None:
+        self.assertIn('sid       = "InvokeConfiguredBedrockModelStream"', self.main)
+        self.assertIn('actions   = ["bedrock:InvokeModelWithResponseStream"]', self.main)
+        self.assertIn("resources = local.bedrock_invocation_resources", self.main)
+        self.assertIn('regex("^us\\\\.", var.model_id)', self.main)
+        self.assertIn('inference-profile/${var.model_id}', self.main)
+        self.assertIn('"us-east-1", "us-east-2", "us-west-2"', self.main)
+
+    def test_harness_attaches_only_the_iam_github_read_gateway_tools(self) -> None:
+        self.assertIn('sid       = "InvokeGitHubReadGateway"', self.main)
+        self.assertIn('actions   = ["bedrock-agentcore:InvokeGateway"]', self.main)
+        self.assertIn('resources = [statement.value]', self.main)
+        self.assertIn('type = "agentcore_gateway"', self.main)
+        self.assertIn('name = "github-read"', self.main)
+        self.assertIn('aws_iam = true', self.main)
+        self.assertIn('"@github-read/listRepositories"', self.main)
+        self.assertIn('"@github-read/getRepository"', self.main)
+        self.assertIn('"@github-read/getFile"', self.main)
+
+    def test_prompt_describes_only_the_attached_read_tools(self) -> None:
+        self.assertIn("`listRepositories`", self.prompt)
+        self.assertIn("`getRepository`", self.prompt)
+        self.assertIn("`getFile`", self.prompt)
+        self.assertIn("Never claim a tool call", self.prompt)
+        self.assertIn("Do not attempt mutations", self.prompt)
+
+    def test_execution_role_and_harness_have_no_unreviewed_capabilities(self) -> None:
         for forbidden in (
-            "agentcore_gateway",
-            "InvokeGateway",
+            "bedrock-mantle:",
             "GetResourceOauth2Token",
             "GetWorkloadAccessToken",
             "secretsmanager:GetSecretValue",

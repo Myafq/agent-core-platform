@@ -1,0 +1,13 @@
+{
+  "tool": "listRepositories",
+  "repositories": [
+    {
+      "owner": "example-org",
+      "name": "example-repo",
+      "private": true
+    }
+  ],
+  "page": 1,
+  "total_count": 1,
+  "has_more": false
+}

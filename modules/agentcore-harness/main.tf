@@ -1,6 +1,14 @@
 locals {
-  harness_name       = replace(var.name, "-", "_")
-  harness_memory_arn = "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:memory/harness_${local.harness_name}_*"
+  harness_name            = replace(var.name, "-", "_")
+  harness_memory_arn      = "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:memory/harness_${local.harness_name}_*"
+  is_us_inference_profile = can(regex("^us\\.", var.model_id))
+  foundation_model_id     = local.is_us_inference_profile ? replace(var.model_id, "us.", "") : var.model_id
+  bedrock_model_arns = local.is_us_inference_profile ? [
+    for region in ["us-east-1", "us-east-2", "us-west-2"] :
+    "arn:${data.aws_partition.current.partition}:bedrock:${region}::foundation-model/${local.foundation_model_id}"
+  ] : ["arn:${data.aws_partition.current.partition}:bedrock:${data.aws_region.current.region}::foundation-model/${var.model_id}"]
+  bedrock_inference_profile_arn = local.is_us_inference_profile ? "arn:${data.aws_partition.current.partition}:bedrock:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:inference-profile/${var.model_id}" : null
+  bedrock_invocation_resources  = concat(local.bedrock_model_arns, local.bedrock_inference_profile_arn == null ? [] : [local.bedrock_inference_profile_arn])
   common_tags = merge(var.tags, {
     Agent       = var.name
     Description = var.description
@@ -26,30 +34,10 @@ data "aws_iam_policy_document" "assume_role" {
 }
 
 data "aws_iam_policy_document" "execution" {
-  # Mantle model IDs are authorized through the service action and model
-  # condition key rather than a foundation-model ARN resource.
   statement {
-    sid       = "ReadBedrockMantleModelMetadata"
-    actions   = ["bedrock-mantle:GetModel", "bedrock-mantle:GetProject"]
-    resources = ["*"]
-  }
-
-  statement {
-    sid       = "InvokeConfiguredBedrockMantleModel"
-    actions   = ["bedrock-mantle:CreateInference"]
-    resources = ["*"]
-
-    condition {
-      test     = "StringEquals"
-      variable = "bedrock-mantle:Model"
-      values   = [var.model_id]
-    }
-  }
-
-  statement {
-    sid       = "CallBedrockMantleWithBearerToken"
-    actions   = ["bedrock-mantle:CallWithBearerToken"]
-    resources = ["*"]
+    sid       = "InvokeConfiguredBedrockModelStream"
+    actions   = ["bedrock:InvokeModelWithResponseStream"]
+    resources = local.bedrock_invocation_resources
   }
 
   # Harness uses a managed public runtime image for every session.
@@ -125,6 +113,15 @@ data "aws_iam_policy_document" "execution" {
     resources = [local.harness_memory_arn]
   }
 
+  dynamic "statement" {
+    for_each = var.gateway_arn == null ? [] : [var.gateway_arn]
+
+    content {
+      sid       = "InvokeGitHubReadGateway"
+      actions   = ["bedrock-agentcore:InvokeGateway"]
+      resources = [statement.value]
+    }
+  }
 }
 
 resource "aws_iam_role" "this" {
@@ -142,6 +139,33 @@ resource "aws_iam_role_policy" "execution" {
 resource "aws_bedrockagentcore_harness" "this" {
   harness_name       = local.harness_name
   execution_role_arn = aws_iam_role.this.arn
+
+  # AgentCore requires a non-empty allow-list. Without the reviewed Gateway,
+  # default shell and file tools remain disabled.
+  allowed_tools = var.gateway_arn == null ? ["@disabled"] : [
+    "@github-read/listRepositories",
+    "@github-read/getRepository",
+    "@github-read/getFile",
+  ]
+
+  dynamic "tool" {
+    for_each = var.gateway_arn == null ? [] : [var.gateway_arn]
+
+    content {
+      type = "agentcore_gateway"
+      name = "github-read"
+
+      config {
+        agentcore_gateway {
+          gateway_arn = tool.value
+
+          outbound_auth {
+            aws_iam = true
+          }
+        }
+      }
+    }
+  }
 
   model {
     bedrock_model_config {

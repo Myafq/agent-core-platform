@@ -15,6 +15,10 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from clients.channel.core import ChannelMessage, ChannelService, invoke_harness
 from contracts.contract_validation import runtime_user_id
 
@@ -91,6 +95,7 @@ class TelegramClient:
         self.token = token
 
     def call(self, method: str, payload: dict[str, Any] | None = None, timeout: int = 40) -> Any:
+        LOGGER.debug("Telegram API request method=%s timeout_seconds=%s", method, timeout)
         request = Request(
             f"{TELEGRAM_API_URL}/bot{self.token}/{method}",
             data=json.dumps(payload or {}).encode("utf-8"),
@@ -101,13 +106,17 @@ class TelegramClient:
             with urlopen(request, timeout=timeout) as response:
                 result = json.load(response)
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as error:
-            raise TelegramApiError(f"Telegram {method} failed: {error}") from error
+            LOGGER.debug("Telegram API failure method=%s error_class=%s", method, type(error).__name__)
+            raise TelegramApiError(f"Telegram {method} failed") from error
         if not result.get("ok"):
-            raise TelegramApiError(f"Telegram {method} failed: {result.get('description', 'unknown error')}")
+            LOGGER.debug("Telegram API rejected request method=%s", method)
+            raise TelegramApiError(f"Telegram {method} failed")
         return result["result"]
 
     def send_text(self, chat_id: int, text: str) -> None:
-        for chunk in split_message(text):
+        chunks = split_message(text)
+        LOGGER.debug("Telegram response chunks=%s characters=%s", len(chunks), len(text))
+        for chunk in chunks:
             self.call("sendMessage", {"chat_id": chat_id, "text": chunk, "link_preview_options": {"is_disabled": True}})
 
 
@@ -152,10 +161,17 @@ def main() -> int:
         allowed_users=allowed_users,
     )
     offset = load_offset(args.offset_file)
+    LOGGER.debug(
+        "Telegram adapter configured allowed_users=%s poll_timeout_seconds=%s has_offset=%s",
+        len(allowed_users),
+        args.poll_timeout,
+        offset is not None,
+    )
     print("Telegram long polling started. Press Ctrl-C to stop.")
     while True:
         try:
             updates = telegram.call("getUpdates", {"offset": offset, "timeout": args.poll_timeout, "allowed_updates": ["message"]}, timeout=args.poll_timeout + 10)
+            LOGGER.debug("Telegram poll updates=%s", len(updates))
             for update in updates:
                 update_id = update.get("update_id")
                 if isinstance(update_id, int):
@@ -163,10 +179,14 @@ def main() -> int:
                     save_offset(args.offset_file, offset)
                 message = incoming_message(update)
                 if message is None or not message.text:
+                    LOGGER.debug("Telegram update ignored reason=unsupported_or_empty")
                     continue
+                LOGGER.debug("Telegram private text accepted")
                 reply = service.handle(ChannelMessage("telegram", tenant_id, str(message.user_id), str(message.chat_id), str(message.message_id), message.text))
                 if reply is not None:
                     telegram.send_text(message.chat_id, reply)
+                else:
+                    LOGGER.debug("Telegram message produced no reply")
         except KeyboardInterrupt:
             print("\nTelegram long polling stopped.")
             return 0

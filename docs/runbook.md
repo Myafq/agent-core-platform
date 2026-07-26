@@ -32,8 +32,10 @@ git diff --check
 ```
 
 `validate_contracts.py` checks the frozen channel and GitHub App read-tool
-fixtures. It permits only `getRepository` and `getFile`; production repository
-allow-lists remain environment-owned and are enforced by the broker.
+fixtures. It permits only `listRepositories`, `getRepository`, and `getFile`;
+the GitHub App installation owns the repository boundary. `listRepositories`
+uses the installation token and returns its current selected repositories;
+repository additions/removals take effect without a Lambda or Harness update.
 
 Validate the provider fixture without a backend or plan:
 
@@ -57,7 +59,6 @@ export AWS_REGION=us-east-1
 export GITHUB_APP_ID=operator-supplied
 export GITHUB_APP_INSTALLATION_ID=operator-supplied
 export GITHUB_APP_PRIVATE_KEY_SECRET_ARN=operator-supplied
-export GITHUB_ALLOWED_REPOSITORIES=owner/repo
 ```
 
 Channel secrets:
@@ -71,6 +72,37 @@ export SLACK_APP_TOKEN=operator-supplied
 Never commit or print these values. App and installation IDs are non-secret;
 tokens and private-key material are secrets.
 
+## GitHub App operator handoff
+
+GHAPP-001 defines the handoff; it does not authorize registration, installation,
+key generation, secret creation, or configuration changes. Before GHAPP-003,
+an authorized operator must provide only these non-secret bindings to the
+deployment owner:
+
+```text
+GITHUB_APP_ID=<numeric App ID, not client ID>
+GITHUB_APP_INSTALLATION_ID=<numeric selected-repository installation ID>
+GITHUB_APP_PRIVATE_KEY_SECRET_ARN=<pre-existing Secrets Manager secret ARN>
+GITHUB_APP_PRIVATE_KEY_SECRET_KEY=agent.pem
+```
+
+Operator verification record, kept outside source and without private content:
+
+1. App has `Contents: Read-only`; no organization or account permissions;
+   webhooks are inactive.
+2. Installation uses `Only select repositories`. Its repository list is the
+   live read boundary for `listRepositories`, `getRepository`, and `getFile`.
+3. Numeric App ID and installation ID identify that App and installation.
+4. The private key exists only in the referenced pre-existing secret; its ARN,
+   not its value, is supplied to Terraform. For a JSON secret, record the key
+   name (`agent.pem`) separately; Lambda reads only that value.
+5. Private-key rotation has a tested previous secret version and a rollback
+   owner. Revoke an old App key only after the replacement works.
+
+If any check fails, do not plan or apply the GitHub slice. Correct the external
+configuration first; do not compensate with wildcard repositories, broader App
+permissions, user tokens, or key material in Terraform.
+
 ## Plan order
 
 The target units do not exist yet. Implement them under these owners:
@@ -83,6 +115,7 @@ agents/github-assistant
 Plan platform first:
 
 ```shell
+./scripts/package_github_tool.sh
 cd live/dev/us-east-1/platform/github-app-tool
 mise exec -- terragrunt init
 mise exec -- terragrunt validate
@@ -115,13 +148,20 @@ Never run `terragrunt run --all apply`.
 Telegram:
 
 ```shell
+export TELEGRAM_BOT_TOKEN=operator-supplied
+export TELEGRAM_ALLOWED_USER_ID=123456789
+
 .venv/bin/python clients/telegram/bot.py \
   --region "$AWS_REGION" \
   --profile "$AWS_PROFILE" \
+  --allowed-user-id "$TELEGRAM_ALLOWED_USER_ID" \
   --harness-arn "$(cd live/dev/us-east-1/agents/github-assistant && mise exec -- terragrunt output -raw harness_arn)"
 ```
 
-Private chats and configured users only. Use long polling, not a webhook.
+`TELEGRAM_ALLOWED_USER_ID` is your numeric Telegram account ID, not a username
+or chat ID. Private chats and this configured user only. The adapter checks that
+no webhook is configured before it starts long polling; it does not remove a
+webhook. Use long polling, not a webhook.
 
 Slack command will be added by SLACK-001. It must use Socket Mode with bot and
 app tokens, direct messages, one workspace, and configured users only.
@@ -135,13 +175,14 @@ After an explicitly authorized GitHub App installation and deployment:
 
 1. Confirm the App is installed on only the expected repositories.
 2. Confirm permissions are read-only Contents plus metadata.
-3. Call `getRepository` for one allowed repository.
-4. Call `getFile` for one small text file.
-5. Reject a repository outside the allow-list.
-6. Reject an unsafe path/ref, unknown tool, mutation request, and oversized
+3. Call `listRepositories`; it returns the installation's current selected repositories.
+4. Call `getRepository` for one listed repository.
+5. Call `getFile` for one small text file.
+6. Reject a repository outside the installation.
+7. Reject an unsafe path/ref, unknown tool, mutation request, and oversized
    response.
-7. Inspect logs for request metadata only; no credentials or private content.
-8. Repeat one allowed read from Telegram and Slack.
+8. Inspect logs for request metadata only; no credentials or private content.
+9. Repeat one allowed read from Telegram and Slack.
 
 Readiness is not invocation. A successful Lambda call alone is not a successful
 Harness/channel path.
