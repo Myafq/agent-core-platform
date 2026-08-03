@@ -1,4 +1,4 @@
-"""Bounded GitHub App read broker for the Gateway Lambda target."""
+"""Bounded GitHub App broker for the Gateway Lambda target."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from contracts.contract_validation import ContractError, validate_tool_invocatio
 
 LOG = logging.getLogger(__name__)
 API_VERSION = "2026-03-10"
-USER_AGENT = "agentcore-github-read-broker/1"
+USER_AGENT = "agentcore-github-broker/1"
 
 
 class BrokerError(RuntimeError):
@@ -77,7 +77,7 @@ class BrokerConfig:
         return cls(os.environ["GITHUB_APP_ID"], os.environ["GITHUB_APP_INSTALLATION_ID"], os.environ["GITHUB_APP_PRIVATE_KEY_SECRET_ARN"], os.environ["GITHUB_APP_PRIVATE_KEY_SECRET_KEY"])
 
 
-class GitHubReadBroker:
+class GitHubBroker:
     def __init__(self, config: BrokerConfig, secrets: SecretReader, signer: JwtSigner, http: HttpClient) -> None:
         self.config, self.secrets, self.signer, self.http = config, secrets, signer, http
 
@@ -88,9 +88,9 @@ class GitHubReadBroker:
             raise BrokerError("invalid_request") from error
         arguments = invocation["arguments"]
         repository = None if invocation["tool"] == "listRepositories" else f"{arguments['owner']}/{arguments['repo']}"
-        token = self._installation_token(repository)
+        token = self._installation_token(repository, invocation["tool"])
         try:
-            result = self._read(invocation["tool"], arguments, token)
+            result = self._execute_tool(invocation["tool"], arguments, token)
             validate_tool_response(result)
             return result
         except ContractError as error:
@@ -98,10 +98,21 @@ class GitHubReadBroker:
         finally:
             token = ""  # do not retain credentials beyond the request
 
-    def _installation_token(self, repository: str | None) -> str:
+    def _installation_token(self, repository: str | None, tool: str) -> str:
         jwt_token = self.signer.sign(self.config.app_id, self.secrets.get_secret_string(self.config.private_key_secret_arn))
         headers = self._headers(jwt_token)
-        request: dict[str, Any] = {"permissions": {"contents": "read"}}
+        permissions = {
+            "listRepositories": {"contents": "read"},
+            "getRepository": {"contents": "read"},
+            "getFile": {"contents": "read"},
+            "pullRepository": {"contents": "read"},
+            "createBranch": {"contents": "write"},
+            "putFile": {"contents": "write"},
+            "createPullRequest": {"pull_requests": "write"},
+            "mergePullRequest": {"contents": "write", "pull_requests": "write"},
+            "createIssue": {"issues": "write"},
+        }
+        request: dict[str, Any] = {"permissions": permissions[tool]}
         if repository is not None:
             request["repositories"] = [repository.rsplit("/", 1)[1]]
         status, body = self.http.request("POST", f"/app/installations/{self.config.installation_id}/access_tokens", headers, request)
@@ -109,7 +120,7 @@ class GitHubReadBroker:
             raise BrokerError("github_auth_failed")
         return body["token"]
 
-    def _read(self, tool: str, arguments: dict[str, Any], token: str) -> dict[str, Any]:
+    def _execute_tool(self, tool: str, arguments: dict[str, Any], token: str) -> dict[str, Any]:
         if tool == "listRepositories":
             page = arguments.get("page", 1)
             status, body = self.http.request("GET", f"/installation/repositories?per_page=100&page={page}", self._headers(token))
@@ -135,6 +146,66 @@ class GitHubReadBroker:
             if status != 200:
                 raise BrokerError("github_not_found" if status == 404 else "github_read_failed")
             return {"tool": tool, "repository": {"owner": body["owner"]["login"], "name": body["name"], "private": body["private"], "default_branch": body["default_branch"]}}
+        if tool == "pullRepository":
+            cursor = arguments.get("cursor", 0)
+            status, tree = self.http.request("GET", f"/repos/{owner}/{repo}/git/trees/{urllib.parse.quote(arguments['ref'], safe='')}?recursive=1", self._headers(token))
+            entries = tree.get("tree")
+            snapshot = tree.get("sha")
+            if status != 200 or not isinstance(entries, list) or not isinstance(snapshot, str):
+                raise BrokerError("github_read_failed")
+            blobs = [entry for entry in entries if isinstance(entry, dict) and entry.get("type") == "blob" and isinstance(entry.get("path"), str) and isinstance(entry.get("sha"), str)]
+            page = blobs[cursor : cursor + 10]
+            files: list[dict[str, str]] = []
+            total_bytes = 0
+            for entry in page:
+                status, blob = self.http.request("GET", f"/repos/{owner}/{repo}/git/blobs/{entry['sha']}", self._headers(token))
+                if status != 200 or blob.get("encoding") != "base64" or not isinstance(blob.get("content"), str):
+                    raise BrokerError("github_read_failed")
+                try:
+                    content = base64.b64decode("".join(blob["content"].split()), validate=True).decode("utf-8")
+                except (ValueError, UnicodeDecodeError):
+                    continue
+                if len(content.encode()) > 32768 or total_bytes + len(content.encode()) > 262144:
+                    continue
+                total_bytes += len(content.encode())
+                files.append({"path": entry["path"], "sha": entry["sha"], "content": content})
+            return {"tool": tool, "snapshot": snapshot, "cursor": cursor, "next_cursor": cursor + len(page), "has_more": cursor + len(page) < len(blobs), "truncated": tree.get("truncated") is True, "files": files}
+        if tool == "createBranch":
+            status, body = self.http.request("POST", f"/repos/{owner}/{repo}/git/refs", self._headers(token), {"ref": f"refs/heads/{arguments['branch']}", "sha": arguments["from_sha"]})
+            if status != 201 or not isinstance(body.get("ref"), str) or not isinstance(body.get("object", {}).get("sha"), str):
+                raise BrokerError("github_write_failed")
+            return {"tool": tool, "branch": arguments["branch"], "sha": body["object"]["sha"]}
+        if tool == "putFile":
+            path = urllib.parse.quote(arguments["path"], safe="/")
+            body = {"message": arguments["message"], "content": base64.b64encode(arguments["content"].encode()).decode(), "branch": arguments["branch"]}
+            if "sha" in arguments:
+                body["sha"] = arguments["sha"]
+            status, result = self.http.request("PUT", f"/repos/{owner}/{repo}/contents/{path}", self._headers(token), body)
+            commit = result.get("commit", {})
+            if status not in (200, 201) or not isinstance(commit.get("sha"), str):
+                raise BrokerError("github_write_failed")
+            return {"tool": tool, "path": arguments["path"], "branch": arguments["branch"], "commit_sha": commit["sha"]}
+        if tool == "createPullRequest":
+            body = {"title": arguments["title"], "head": arguments["head"], "base": arguments["base"]}
+            if "body" in arguments:
+                body["body"] = arguments["body"]
+            status, result = self.http.request("POST", f"/repos/{owner}/{repo}/pulls", self._headers(token), body)
+            if status != 201 or not isinstance(result.get("number"), int) or not isinstance(result.get("html_url"), str):
+                raise BrokerError("github_write_failed")
+            return {"tool": tool, "number": result["number"], "url": result["html_url"]}
+        if tool == "mergePullRequest":
+            status, result = self.http.request("PUT", f"/repos/{owner}/{repo}/pulls/{arguments['number']}/merge", self._headers(token), {"merge_method": arguments.get("merge_method", "squash")})
+            if status != 200 or result.get("merged") is not True or not isinstance(result.get("sha"), str):
+                raise BrokerError("github_write_failed")
+            return {"tool": tool, "number": arguments["number"], "sha": result["sha"]}
+        if tool == "createIssue":
+            body = {"title": arguments["title"]}
+            if "body" in arguments:
+                body["body"] = arguments["body"]
+            status, result = self.http.request("POST", f"/repos/{owner}/{repo}/issues", self._headers(token), body)
+            if status != 201 or not isinstance(result.get("number"), int) or not isinstance(result.get("html_url"), str):
+                raise BrokerError("github_write_failed")
+            return {"tool": tool, "number": result["number"], "url": result["html_url"]}
         path = urllib.parse.quote(arguments["path"], safe="/")
         suffix = "" if "ref" not in arguments else "?ref=" + urllib.parse.quote(arguments["ref"], safe="")
         status, body = self.http.request("GET", f"/repos/{owner}/{repo}/contents/{path}{suffix}", self._headers(token))

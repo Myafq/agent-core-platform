@@ -1,0 +1,15 @@
+{
+  "tool": "pullRepository",
+  "snapshot": "dddddddddddddddddddddddddddddddddddddddd",
+  "cursor": 0,
+  "next_cursor": 1,
+  "has_more": false,
+  "truncated": false,
+  "files": [
+    {
+      "path": "README.md",
+      "sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "content": "repository\n"
+    }
+  ]
+}

@@ -31,8 +31,9 @@ mise exec -- terragrunt hcl fmt --check
 git diff --check
 ```
 
-`validate_contracts.py` checks the frozen channel and GitHub App read-tool
-fixtures. It permits only `listRepositories`, `getRepository`, and `getFile`;
+`validate_contracts.py` checks the frozen channel and GitHub App tool fixtures.
+It permits only fixed read, branch, file-write, pull-request, merge, and issue
+operations;
 the GitHub App installation owns the repository boundary. `listRepositories`
 uses the installation token and returns its current selected repositories;
 repository additions/removals take effect without a Lambda or Harness update.
@@ -88,7 +89,7 @@ GITHUB_APP_PRIVATE_KEY_SECRET_KEY=agent.pem
 
 Operator verification record, kept outside source and without private content:
 
-1. App has `Contents: Read-only`; no organization or account permissions;
+1. App has Contents, Pull requests, and Issues read/write; no organization or account permissions;
    webhooks are inactive.
 2. Installation uses `Only select repositories`. Its repository list is the
    live read boundary for `listRepositories`, `getRepository`, and `getFile`.
@@ -112,7 +113,13 @@ platform/github-app-tool
 agents/github-assistant
 ```
 
-Plan platform first:
+Build the Harness coding image for `linux/arm64`, publish it to the private ECR
+repository, then plan the Harness-native workspace. The image must include Git,
+GitHub CLI, Python, Make, jq, and the project toolchain. Configure the Harness
+with VPC subnets/security groups and an EFS access point mounted at
+`/mnt/workspace`; VPC egress needs NAT for GitHub and ECR Public access.
+
+Plan platform first while the transition Gateway exists:
 
 ```shell
 ./scripts/package_github_tool.sh
@@ -124,7 +131,7 @@ mise exec -- terragrunt plan -out=plan.tfplan
 
 Accept only the scoped Gateway/Lambda resources, exact tool schemas, logs, and
 roles. Reject private-key values, broad Lambda/Gateway IAM, OAuth/Token Vault
-resources, repository wildcards, or mutation tools.
+resources, repository wildcards, or arbitrary HTTP/Git execution.
 
 Plan the Harness after platform outputs exist:
 
@@ -135,10 +142,10 @@ mise exec -- terragrunt validate
 mise exec -- terragrunt plan -out=plan.tfplan
 ```
 
-Accept only the model/Harness resources, scoped execution role, and exact
-Gateway tool allow-list. Reject Cognito/JWT authorizers, native GitHub OAuth,
-Token Vault access, built-in shell/filesystem/browser/code tools, or a platform
-resource owned by the agent state.
+Accept only the model/Harness resources, private-ECR image pull permission,
+explicit built-in shell/file allow-list, scoped VPC/EFS IAM, and the exact
+filesystem mount. Reject Cognito/JWT authorizers, native GitHub OAuth, Token
+Vault access, arbitrary host mounts, or broad EFS/ECR permissions.
 
 Plans are safe. Apply requires explicit authorization immediately before use.
 Never run `terragrunt run --all apply`.
@@ -174,13 +181,13 @@ request IDs. Do not log raw events or tokens.
 After an explicitly authorized GitHub App installation and deployment:
 
 1. Confirm the App is installed on only the expected repositories.
-2. Confirm permissions are read-only Contents plus metadata.
+2. Confirm permissions are Contents, Pull requests, and Issues read/write plus metadata.
 3. Call `listRepositories`; it returns the installation's current selected repositories.
 4. Call `getRepository` for one listed repository.
 5. Call `getFile` for one small text file.
 6. Reject a repository outside the installation.
-7. Reject an unsafe path/ref, unknown tool, mutation request, and oversized
-   response.
+7. Reject an unsafe path/ref, unknown tool, arbitrary HTTP/Git request, and
+   oversized response.
 8. Inspect logs for request metadata only; no credentials or private content.
 9. Repeat one allowed read from Telegram and Slack.
 

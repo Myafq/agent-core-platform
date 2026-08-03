@@ -1,81 +1,25 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.local/schemas/github-tool-invocation-v1alpha1.schema.json",
-  "title": "GitHub read tool invocation v1alpha1",
+  "title": "GitHub tool invocation v1alpha1",
   "oneOf": [
-    {"$ref": "#/$defs/listRepositories"},
-    {"$ref": "#/$defs/getRepository"},
-    {"$ref": "#/$defs/getFile"}
+    {"$ref": "#/$defs/listRepositories"}, {"$ref": "#/$defs/getRepository"}, {"$ref": "#/$defs/getFile"}, {"$ref": "#/$defs/pullRepository"},
+    {"$ref": "#/$defs/createBranch"}, {"$ref": "#/$defs/putFile"}, {"$ref": "#/$defs/createPullRequest"}, {"$ref": "#/$defs/mergePullRequest"}, {"$ref": "#/$defs/createIssue"}
   ],
   "$defs": {
-    "repository": {
-      "type": "string",
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$"
-    },
-    "listRepositories": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["tool", "arguments"],
-      "properties": {
-        "tool": {"const": "listRepositories"},
-        "arguments": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "page": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 10000
-            }
-          }
-        }
-      }
-    },
-    "getRepository": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["tool", "arguments"],
-      "properties": {
-        "tool": {"const": "getRepository"},
-        "arguments": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["owner", "repo"],
-          "properties": {
-            "owner": {"$ref": "#/$defs/repository"},
-            "repo": {"$ref": "#/$defs/repository"}
-          }
-        }
-      }
-    },
-    "getFile": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["tool", "arguments"],
-      "properties": {
-        "tool": {"const": "getFile"},
-        "arguments": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["owner", "repo", "path"],
-          "properties": {
-            "owner": {"$ref": "#/$defs/repository"},
-            "repo": {"$ref": "#/$defs/repository"},
-            "path": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 1024,
-              "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9._/-]+$"
-            },
-            "ref": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 255,
-              "pattern": "^(?!/)(?!.*//)(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9._/-]*$"
-            }
-          }
-        }
-      }
-    }
+    "repository": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$"},
+    "path": {"type": "string", "minLength": 1, "maxLength": 1024, "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9._/-]+$"},
+    "ref": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "^(?!/)(?!.*//)(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9._/-]*$"},
+    "sha": {"type": "string", "pattern": "^[a-f0-9]{40,64}$"},
+    "repoArgs": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"$ref": "#/$defs/repository"}, "repo": {"$ref": "#/$defs/repository"}}},
+    "listRepositories": {"type": "object", "additionalProperties": false, "required": ["tool", "arguments"], "properties": {"tool": {"const": "listRepositories"}, "arguments": {"type": "object", "additionalProperties": false, "properties": {"page": {"type": "integer", "minimum": 1, "maximum": 10000}}}}},
+    "getRepository": {"type": "object", "additionalProperties": false, "required": ["tool", "arguments"], "properties": {"tool": {"const": "getRepository"}, "arguments": {"allOf": [{"$ref": "#/$defs/repoArgs"}], "unevaluatedProperties": false}}},
+    "getFile": {"type": "object", "additionalProperties": false, "required": ["tool", "arguments"], "properties": {"tool": {"const": "getFile"}, "arguments": {"allOf": [{"$ref": "#/$defs/repoArgs"}], "unevaluatedProperties": false, "required": ["path"], "properties": {"path": {"$ref": "#/$defs/path"}, "ref": {"$ref": "#/$defs/ref"}}}}},
+    "pullRepository": {"type": "object", "additionalProperties": false, "required": ["tool", "arguments"], "properties": {"tool": {"const": "pullRepository"}, "arguments": {"allOf": [{"$ref": "#/$defs/repoArgs"}], "unevaluatedProperties": false, "required": ["ref"], "properties": {"ref": {"$ref": "#/$defs/ref"}, "cursor": {"type": "integer", "minimum": 0, "maximum": 1000000}}}}},
+    "createBranch": {"type": "object", "additionalProperties": false, "required": ["tool", "arguments"], "properties": {"tool": {"const": "createBranch"}, "arguments": {"allOf": [{"$ref": "#/$defs/repoArgs"}], "unevaluatedProperties": false, "required": ["branch", "from_sha"], "properties": {"branch": {"$ref": "#/$defs/ref"}, "from_sha": {"$ref": "#/$defs/sha"}}}}},
+    "putFile": {"type": "object", "additionalProperties": false, "required": ["tool", "arguments"], "properties": {"tool": {"const": "putFile"}, "arguments": {"allOf": [{"$ref": "#/$defs/repoArgs"}], "unevaluatedProperties": false, "required": ["path", "content", "message", "branch"], "properties": {"path": {"$ref": "#/$defs/path"}, "content": {"type": "string", "maxLength": 65536}, "message": {"type": "string", "minLength": 1, "maxLength": 256}, "branch": {"$ref": "#/$defs/ref"}, "sha": {"$ref": "#/$defs/sha"}}}}},
+    "createPullRequest": {"type": "object", "additionalProperties": false, "required": ["tool", "arguments"], "properties": {"tool": {"const": "createPullRequest"}, "arguments": {"allOf": [{"$ref": "#/$defs/repoArgs"}], "unevaluatedProperties": false, "required": ["title", "head", "base"], "properties": {"title": {"type": "string", "minLength": 1, "maxLength": 256}, "head": {"$ref": "#/$defs/ref"}, "base": {"$ref": "#/$defs/ref"}, "body": {"type": "string", "maxLength": 65536}}}}},
+    "mergePullRequest": {"type": "object", "additionalProperties": false, "required": ["tool", "arguments"], "properties": {"tool": {"const": "mergePullRequest"}, "arguments": {"allOf": [{"$ref": "#/$defs/repoArgs"}], "unevaluatedProperties": false, "required": ["number"], "properties": {"number": {"type": "integer", "minimum": 1}, "merge_method": {"enum": ["merge", "squash", "rebase"]}}}}},
+    "createIssue": {"type": "object", "additionalProperties": false, "required": ["tool", "arguments"], "properties": {"tool": {"const": "createIssue"}, "arguments": {"allOf": [{"$ref": "#/$defs/repoArgs"}], "unevaluatedProperties": false, "required": ["title"], "properties": {"title": {"type": "string", "minLength": 1, "maxLength": 256}, "body": {"type": "string", "maxLength": 65536}}}}}
   }
 }

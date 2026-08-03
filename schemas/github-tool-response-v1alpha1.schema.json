@@ -1,76 +1,19 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.local/schemas/github-tool-response-v1alpha1.schema.json",
-  "title": "GitHub read tool response v1alpha1",
+  "title": "GitHub tool response v1alpha1",
   "oneOf": [
-    {"$ref": "#/$defs/repositories"},
-    {"$ref": "#/$defs/repository"},
-    {"$ref": "#/$defs/file"}
+    {"$ref": "#/$defs/repositories"}, {"$ref": "#/$defs/repository"}, {"$ref": "#/$defs/file"}, {"$ref": "#/$defs/pull"}, {"$ref": "#/$defs/branch"}, {"$ref": "#/$defs/fileWrite"}, {"$ref": "#/$defs/pullRequest"}, {"$ref": "#/$defs/merge"}, {"$ref": "#/$defs/issue"}
   ],
   "$defs": {
-    "repositories": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["tool", "repositories", "page", "total_count", "has_more"],
-      "properties": {
-        "tool": {"const": "listRepositories"},
-        "repositories": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 100,
-          "uniqueItems": true,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["owner", "name", "private"],
-            "properties": {
-              "owner": {"type": "string", "maxLength": 100},
-              "name": {"type": "string", "maxLength": 100},
-              "private": {"type": "boolean"}
-            }
-          }
-        },
-        "page": {"type": "integer", "minimum": 1, "maximum": 10000},
-        "total_count": {"type": "integer", "minimum": 0, "maximum": 1000000},
-        "has_more": {"type": "boolean"}
-      }
-    },
-    "repository": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["tool", "repository"],
-      "properties": {
-        "tool": {"const": "getRepository"},
-        "repository": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["owner", "name", "private", "default_branch"],
-          "properties": {
-            "owner": {"type": "string", "maxLength": 100},
-            "name": {"type": "string", "maxLength": 100},
-            "private": {"type": "boolean"},
-            "default_branch": {"type": "string", "maxLength": 255}
-          }
-        }
-      }
-    },
-    "file": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["tool", "file"],
-      "properties": {
-        "tool": {"const": "getFile"},
-        "file": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["path", "ref", "content"],
-          "properties": {
-            "path": {"type": "string", "maxLength": 1024},
-            "ref": {"type": "string", "maxLength": 255},
-            "content": {"type": "string", "maxLength": 65536}
-          }
-        }
-      }
-    }
+    "repositories": {"type": "object", "additionalProperties": false, "required": ["tool", "repositories", "page", "total_count", "has_more"], "properties": {"tool": {"const": "listRepositories"}, "repositories": {"type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true, "items": {"type": "object", "additionalProperties": false, "required": ["owner", "name", "private"], "properties": {"owner": {"type": "string", "maxLength": 100}, "name": {"type": "string", "maxLength": 100}, "private": {"type": "boolean"}}}}, "page": {"type": "integer", "minimum": 1, "maximum": 10000}, "total_count": {"type": "integer", "minimum": 0, "maximum": 1000000}, "has_more": {"type": "boolean"}}},
+    "repository": {"type": "object", "additionalProperties": false, "required": ["tool", "repository"], "properties": {"tool": {"const": "getRepository"}, "repository": {"type": "object", "additionalProperties": false, "required": ["owner", "name", "private", "default_branch"], "properties": {"owner": {"type": "string", "maxLength": 100}, "name": {"type": "string", "maxLength": 100}, "private": {"type": "boolean"}, "default_branch": {"type": "string", "maxLength": 255}}}}},
+    "file": {"type": "object", "additionalProperties": false, "required": ["tool", "file"], "properties": {"tool": {"const": "getFile"}, "file": {"type": "object", "additionalProperties": false, "required": ["path", "ref", "content"], "properties": {"path": {"type": "string", "maxLength": 1024}, "ref": {"type": "string", "maxLength": 255}, "content": {"type": "string", "maxLength": 65536}}}}},
+    "pull": {"type": "object", "additionalProperties": false, "required": ["tool", "snapshot", "cursor", "next_cursor", "has_more", "truncated", "files"], "properties": {"tool": {"const": "pullRepository"}, "snapshot": {"type": "string", "maxLength": 64}, "cursor": {"type": "integer", "minimum": 0}, "next_cursor": {"type": "integer", "minimum": 0}, "has_more": {"type": "boolean"}, "truncated": {"type": "boolean"}, "files": {"type": "array", "maxItems": 10, "items": {"type": "object", "additionalProperties": false, "required": ["path", "sha", "content"], "properties": {"path": {"type": "string", "maxLength": 1024}, "sha": {"type": "string", "maxLength": 64}, "content": {"type": "string", "maxLength": 32768}}}}}},
+    "branch": {"type": "object", "additionalProperties": false, "required": ["tool", "branch", "sha"], "properties": {"tool": {"const": "createBranch"}, "branch": {"type": "string", "maxLength": 255}, "sha": {"type": "string", "maxLength": 64}}},
+    "fileWrite": {"type": "object", "additionalProperties": false, "required": ["tool", "path", "branch", "commit_sha"], "properties": {"tool": {"const": "putFile"}, "path": {"type": "string", "maxLength": 1024}, "branch": {"type": "string", "maxLength": 255}, "commit_sha": {"type": "string", "maxLength": 64}}},
+    "pullRequest": {"type": "object", "additionalProperties": false, "required": ["tool", "number", "url"], "properties": {"tool": {"const": "createPullRequest"}, "number": {"type": "integer", "minimum": 1}, "url": {"type": "string", "format": "uri", "maxLength": 2048}}},
+    "merge": {"type": "object", "additionalProperties": false, "required": ["tool", "number", "sha"], "properties": {"tool": {"const": "mergePullRequest"}, "number": {"type": "integer", "minimum": 1}, "sha": {"type": "string", "maxLength": 64}}},
+    "issue": {"type": "object", "additionalProperties": false, "required": ["tool", "number", "url"], "properties": {"tool": {"const": "createIssue"}, "number": {"type": "integer", "minimum": 1}, "url": {"type": "string", "format": "uri", "maxLength": 2048}}}
   }
 }

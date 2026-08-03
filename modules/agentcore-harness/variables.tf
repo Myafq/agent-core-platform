@@ -66,6 +66,13 @@ variable "gateway_arn" {
   nullable    = true
 }
 
+variable "container_uri" {
+  description = "Optional immutable ARM64 ECR image for the Harness execution environment."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

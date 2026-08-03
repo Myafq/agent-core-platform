@@ -36,6 +36,16 @@ data "aws_iam_policy_document" "assume_role" {
       identifiers = ["bedrock-agentcore.amazonaws.com"]
     }
   }
+
+  dynamic "statement" {
+    for_each = var.container_uri == null ? [] : [var.container_uri]
+
+    content {
+      sid       = "PullCodingContainer"
+      actions   = ["ecr:GetAuthorizationToken"]
+      resources = ["*"]
+    }
+  }
 }
 
 data "aws_iam_policy_document" "execution" {
@@ -148,9 +158,17 @@ resource "aws_bedrockagentcore_harness" "this" {
   # AgentCore requires a non-empty allow-list. Without the reviewed Gateway,
   # default shell and file tools remain disabled.
   allowed_tools = var.gateway_arn == null ? ["@disabled"] : [
+    "@builtin/shell",
+    "@builtin/file_operations",
     "@github-read/listRepositories",
     "@github-read/getRepository",
     "@github-read/getFile",
+    "@github-read/pullRepository",
+    "@github-read/createBranch",
+    "@github-read/putFile",
+    "@github-read/createPullRequest",
+    "@github-read/mergePullRequest",
+    "@github-read/createIssue",
   ]
 
   dynamic "tool" {
@@ -168,6 +186,16 @@ resource "aws_bedrockagentcore_harness" "this" {
             aws_iam = true
           }
         }
+      }
+    }
+  }
+
+  dynamic "environment_artifact" {
+    for_each = var.container_uri == null ? [] : [var.container_uri]
+
+    content {
+      container_configuration {
+        container_uri = environment_artifact.value
       }
     }
   }

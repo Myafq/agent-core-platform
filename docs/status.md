@@ -65,7 +65,7 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   contract and validator were removed. Terragrunt remains unavailable after
   the mise SSM environment hook failed before tool startup.
 - GHAPP-001 defines the GitHub App operator contract: selected repositories
-  only; `Contents: Read-only`; no organization/account permissions or
+  only; Contents, Pull requests, and Issues read/write; no organization/account permissions or
   webhooks; numeric App/installation IDs; a pre-existing private-key secret
   ARN; staged key rotation and rollback. No App, installation, secret, or
   cloud configuration was created or changed.
@@ -74,17 +74,16 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   installation-token request; additions/removals need no Lambda or Harness
   update. The two repository-read tools create per-request narrowed installation
   tokens and call fixed GitHub REST endpoints. All responses are normalized and
-  errors safely classified. Fake-client tests verify no credential leakage. No
-  Lambda, secret, GitHub App, or cloud resource was created.
-- The operator applied `GATEWAY-001` on 2026-07-25. Read-only checks found
-  Gateway `github-app-tool-nckdlx01xy` and Lambda `github-app-tool`; Lambda is
-  `Active`, its last update is `Successful`, and the corrected Gateway
-  client-context adapter was deployed at 2026-07-26T03:45:25Z. No broker or
-  Gateway tool invocation has succeeded.
-- `HARNESS-002` is Harness version 12 and `READY`. Its single `github-read`
-  Gateway tool uses AWS IAM and `allowedTools` contains only
-  `@github-read/listRepositories`, `@github-read/getRepository`, and
-  `@github-read/getFile`. Its deployed model is
+  errors safely classified. Fake-client tests verify no credential leakage. The
+  current Lambda/Gateway deployment is recorded below; App permissions remain
+  an external configuration boundary.
+- `GATEWAY-001` applied 2026-07-26: Gateway `github-app-tool-nckdlx01xy` has
+  five fixed write targets and Lambda `github-app-tool` is `Active` with a
+  `Successful` update at 2026-07-26T12:43:30Z. A live Harness request invoked
+  the Gateway/Lambda and listed the selected repositories.
+- `HARNESS-002` is Harness version 13 and `READY`. Its single `github-read`
+  Gateway tool uses AWS IAM and its exact allow-list has the three read and five
+  autonomous write operations. Its deployed model is
   `global.anthropic.claude-sonnet-4-6` with `converse_stream` and a scoped
   standard Bedrock streaming policy. A live Harness attempt reached Sonnet but
   failed before Gateway because the model rejects requests that specify both
@@ -102,6 +101,23 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   long-polling offsets, and shared IAM Harness invocation are present in source.
   Starting it requires a supplied bot token, one numeric Telegram user ID, and
   explicit authorization for live polling and invocation.
+- `WRITE-001` is in progress. The fixed, selected-repository branch, file,
+  pull-request, merge, and issue tools are deployed. Each request gets a new
+  repository-narrowed installation token with only the required permission.
+  The agent does not insert a confirmation turn. Offline validation and a live
+  repository-list request passed; App write permissions and live mutation proof
+  remain pending.
+- `HARNESS-003` is in progress. Source now has an ARM64 Amazon Linux coding
+  image with Git, GitHub CLI, Python, Make, jq, and Unix tooling. The Harness
+  module accepts an immutable private-ECR image and enables built-in shell and
+  file operations in its next revision. ECR publishing, VPC/NAT, EFS access
+  point, runtime filesystem attachment, and live coding-session proof remain
+  pending. The installed provider supports the container artifact but not the
+  Harness VPC/filesystem fields; those require the controlled post-create API
+  update used for `apiFormat`.
+- The private ECR repository `github-app-tool-coding` was created 2026-07-26
+  with immutable tags, scan-on-push, and 10-image retention. No image has been
+  pushed and the deployed Harness remains on its current managed environment.
 - Kimi's `chat_completions` tool-call protocol incompatibility remains known.
   The pending Sonnet change uses native `converse_stream`; a restricted tool
   retry remains required after apply.
@@ -136,23 +152,28 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   in-place updates; post-apply `get-harness` reported `READY`, version 3, no
   tools/skills, `allowedTools: ["@disabled"]`, and the chat-only prompt. The
   follow-up plan was no-change.
-- The active IAM Harness is version 9 and `READY`; it has one IAM GitHub
-  Gateway tool and the three reviewed read-only operations. No successful
-  channel-to-Gateway invocation proof exists yet.
-- No end-to-end Telegram/Slack-to-GitHub invocation has succeeded.
+- The active IAM Harness is version 13 and `READY`; it has one IAM GitHub
+  Gateway tool and all eight deployed operations. A direct IAM
+  Harness-to-Gateway repository-list invocation succeeded.
+- The deployed Harness does not yet have the custom container, built-in
+  shell/file allow-list, VPC attachment, or EFS mount.
+- No Telegram/Slack-to-GitHub invocation or live mutation has succeeded.
+- The installed GitHub App is not yet verified with `Contents: Read and write`,
+  `Pull requests: Read and write`, and `Issues: Read and write`; the new write
+  tools cannot succeed until that external configuration and deployment exist.
 - No cloud, GitHub, Slack, or Telegram settings were changed during this review.
 
 ## Blockers
 
-- GitHub App registration, installation, selected repositories, App ID,
-  installation ID, and private-key secret ARN require explicit operator work.
+- GitHub App write permissions must be verified or updated outside this
+  environment before the deployed mutation tools can succeed.
 - Slack app manifest/install values and tokens are not yet supplied.
-- Apply, destroy, secret creation, and external app settings require explicit
-  authorization.
+- The scoped GitHub platform and Harness plans applied. No GitHub App settings
+  changed from this environment.
 - User-delegated GitHub remains blocked on a fixed and isolated Harness 3LO path
   or an explicit custom Runtime decision.
 
 ## Next
 
-Next: make one restricted tool retry. Do not claim GitHub tool execution unless
-it succeeds.
+Next: create/push the custom ECR image, provision the native Harness workspace,
+then run one clone/edit/test/commit/push/PR proof.

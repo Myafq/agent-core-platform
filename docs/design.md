@@ -66,7 +66,7 @@ flowchart LR
 | Adapter to Harness | one narrowly scoped AWS IAM role using SigV4 | `InvokeHarness` on one Harness; `InvokeHarnessForUser` only if required by the final SDK/API shape |
 | Harness to Gateway | Harness execution role | `InvokeGateway` on one Gateway and exact `allowedTools` |
 | Gateway to Lambda | Gateway service role | `lambda:InvokeFunction` on one qualified function ARN |
-| Lambda to GitHub | GitHub App JWT exchanged for an installation token | selected installation, repository allow-list, and read-only App permissions |
+| Lambda to GitHub | GitHub App JWT exchanged for an installation token | selected installation, repository allow-list, and exact App permissions |
 
 The adapter derives `runtimeUserId`; users never supply it. It is a session and
 memory partition key, not proof that GitHub acted as that user. Use a
@@ -125,33 +125,43 @@ threading tests.
 ### Harness
 
 Harness remains the only agent loop. Deploy one IAM/SigV4 Harness without native
-authorization-code OAuth. Attach one Gateway tool and allow only the reviewed
-GitHub operations.
+authorization-code OAuth. Its custom ARM64 container supplies Git, GitHub CLI,
+and the project toolchain; built-in shell and file operations are explicitly
+allowed for repository work.
 
-Built-in shell, filesystem, browser, and code interpreter stay disabled unless
-separately added to the public agent contract and threat model.
+Attach EFS through an access point at `/mnt/workspace` in VPC mode. A coding
+session clones and edits source, runs tests, and uses Git/GitHub CLI from that
+same workspace. The EFS mount is shared durable storage; session IDs select the
+active working session, not GitHub user identity.
 
 The execution role gets only model invocation, required Harness-managed
 session/memory access, observability, and `InvokeGateway` on the selected
 Gateway. Remove Token Vault, OAuth client-secret, and
 `GetResourceOauth2Token` permissions from the machine-identity deployment.
 
-### GitHub Gateway and tool broker
+### GitHub Gateway and tool broker (transition state)
 
-Use one `AWS_IAM` MCP Gateway with one Lambda target. The Gateway role can invoke
-only that Lambda. The Lambda owns GitHub authentication and policy enforcement.
+The deployed `AWS_IAM` Gateway/Lambda slice is transitional. It proves the App
+identity and selected-repository boundary, but its REST operations do not give
+the agent a real checkout. HARNESS-003 replaces it with native workspace tools;
+retire the Gateway slice after live native proof.
 
-Initial tools:
+Tools:
 
 | Tool | Inputs | Enforced boundary |
 |---|---|---|
 | `listRepositories` | optional page | reads the current selected repositories from the GitHub App installation; 100 results per bounded page |
 | `getRepository` | owner, repo | GitHub validates the repository against the current installation; token is narrowed to that repository |
 | `getFile` | owner, repo, path, optional ref | current-installation repository only; size and binary limits |
+| `createBranch` | owner, repo, branch, source commit SHA | current-installation repository only; fixed Git ref endpoint |
+| `putFile` | owner, repo, path, UTF-8 content, commit message, branch, optional blob SHA | current-installation repository only; fixed contents endpoint |
+| `createPullRequest` | owner, repo, title, head, base, optional body | current-installation repository only; fixed pull-request endpoint |
+| `mergePullRequest` | owner, repo, number, optional merge method | current-installation repository only; fixed merge endpoint |
+| `createIssue` | owner, repo, title, optional body | current-installation repository only; fixed issue endpoint |
 
-Add pull-request or issue reads only after these tools pass live
-validation. No arbitrary URL, GraphQL document, HTTP method, header, shell
-command, repository wildcard, or mutation input.
+The agent autonomously runs a supported operation when the user asks. No
+confirmation turn is inserted. No arbitrary URL, GraphQL document, HTTP method,
+header, shell command, or repository wildcard is exposed.
 
 The Lambda:
 
@@ -176,11 +186,12 @@ repository content to Harness; never copy that content into diagnostics.
 MVP permissions:
 
 - Repository metadata: read-only/implicit.
-- Contents: read-only.
+- Contents: read and write.
+- Pull requests: read and write.
+- Issues: read and write.
 - Selected repositories only.
 - No webhooks unless a later feature needs them.
 - No organization permissions.
-- No write permissions.
 
 The App ID and installation ID are non-secret configuration. The private key is
 a secret. Terraform consumes only its secret ARN; secret material must not
@@ -188,12 +199,11 @@ enter Terraform state.
 
 #### Operator contract
 
-Create and install the App only after GHAPP-003 is explicitly authorized. Its
-registration and each installation must meet all of these conditions:
+The App registration and each installation must meet all of these conditions:
 
 | Item | Required value or action |
 |---|---|
-| Repository permissions | `Contents: Read-only` only. Repository metadata is the GitHub implicit read capability; request no additional repository permission. |
+| Repository permissions | `Contents`, `Pull requests`, and `Issues`: read and write. Repository metadata is the GitHub implicit read capability; request no organization or account permission. |
 | Organization and account permissions | None. |
 | Webhooks | Inactive; subscribe to no events. |
 | Installation scope | `Only select repositories`. This live GitHub installation selection is the repository boundary; do not duplicate it in Lambda configuration or select all repositories. |
@@ -216,7 +226,7 @@ Rollback means stop the GitHub slice, remove the Lambda's permission to read
 the private-key secret or roll back to the prior validated Lambda version, and
 revoke the affected App key if compromise is suspected. Do not delete the App,
 installation, secret, or Terraform state as an incident shortcut. Re-enable
-only after the selected-repository scope, read-only permissions, and secret
+only after the selected-repository scope, exact permissions, and secret
 access boundary are re-verified.
 
 ## User-delegated GitHub
@@ -259,7 +269,6 @@ history is not a runtime dependency.
 
 ## Safety
 
-- Read-only GitHub first.
 - Repository boundary enforced by GitHub App installation scope, not only in the prompt.
 - Exact Harness `allowedTools`.
 - Bounded inputs and outputs.
@@ -269,8 +278,8 @@ history is not a runtime dependency.
 - Per-channel rate limits and concurrency limits.
 - No platform credentials in YAML, state, plans, logs, events, prompts, or
   replies. Treat retrieved private repository content as sensitive user data.
-- Every future mutation needs a separate tool, explicit user confirmation,
-  branch/PR-only initial scope, idempotency, and audit evidence.
+- Every mutation has a separate fixed tool; supported user requests execute
+  without a confirmation turn. Tool and request metadata provide audit evidence.
 
 ## Verification model
 

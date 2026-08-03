@@ -3,7 +3,7 @@ kind: Agent
 
 metadata:
   name: github-assistant
-  description: A concise terminal assistant with bounded read-only GitHub tools.
+  description: A concise terminal assistant with bounded autonomous GitHub tools.
   tags:
     Project: agentcore-yaml-lab
 

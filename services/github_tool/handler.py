@@ -7,11 +7,11 @@ import json
 import os
 from typing import Any
 
-from services.github_tool.broker import BrokerConfig, BrokerError, GitHubReadBroker, PyJwtSigner, UrllibGitHubClient
+from services.github_tool.broker import BrokerConfig, BrokerError, GitHubBroker, PyJwtSigner, UrllibGitHubClient
 
 LOG = logging.getLogger(__name__)
 LOG.setLevel(os.getenv("LOG_LEVEL", "INFO"))
-ALLOWED_TOOLS = frozenset({"listRepositories", "getRepository", "getFile"})
+ALLOWED_TOOLS = frozenset({"listRepositories", "getRepository", "getFile", "pullRepository", "createBranch", "putFile", "createPullRequest", "mergePullRequest", "createIssue"})
 
 
 class SecretsManagerReader:
@@ -51,12 +51,12 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     try:
         config = BrokerConfig.from_environment()
         tool_name = gateway_tool_name(context)
-        result = GitHubReadBroker(config, SecretsManagerReader(config.private_key_secret_key), PyJwtSigner(), UrllibGitHubClient()).execute({"tool": tool_name, "arguments": event})
-        LOG.info("github_read request_id=%s tool=%s result=success", request_id, tool_name)
+        result = GitHubBroker(config, SecretsManagerReader(config.private_key_secret_key), PyJwtSigner(), UrllibGitHubClient()).execute({"tool": tool_name, "arguments": event})
+        LOG.info("github request_id=%s tool=%s result=success", request_id, tool_name)
         return result
     except BrokerError as error:
-        LOG.warning("github_read request_id=%s error_class=%s", request_id, error)
-        return {"error": "github_read_unavailable"}
+        LOG.warning("github request_id=%s error_class=%s", request_id, error)
+        return {"error": "github_unavailable"}
     except Exception:
-        LOG.error("github_read request_id=%s error_class=internal_error", request_id)
-        return {"error": "github_read_unavailable"}
+        LOG.error("github request_id=%s error_class=internal_error", request_id)
+        return {"error": "github_unavailable"}

@@ -23,8 +23,10 @@ def main() -> int:
     validate_tool_invocation(load_json(contracts / "github" / "list_repositories.json"))
     validate_tool_invocation(load_json(contracts / "github" / "get_repository.json"))
     validate_tool_invocation(load_json(contracts / "github" / "get_file.json"))
+    validate_tool_invocation(load_json(contracts / "github" / "pull_repository.json"))
     validate_tool_response(load_json(contracts / "github" / "list_repositories_response.json"))
     validate_tool_response(load_json(contracts / "github" / "get_file_response.json"))
+    validate_tool_response(load_json(contracts / "github" / "pull_repository_response.json"))
     print("Channel and GitHub tool contracts are valid")
     return 0
 

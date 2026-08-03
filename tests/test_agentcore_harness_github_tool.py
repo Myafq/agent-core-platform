@@ -45,7 +45,7 @@ class AgentCoreHarnessChatOnlyTests(unittest.TestCase):
         self.assertIn('inference-profile/${var.model_id}', self.main)
         self.assertIn('bedrock:*::foundation-model/${local.foundation_model_id}', self.main)
 
-    def test_harness_attaches_only_the_iam_github_read_gateway_tools(self) -> None:
+    def test_harness_attaches_the_iam_github_gateway_tools(self) -> None:
         self.assertIn('sid       = "InvokeGitHubReadGateway"', self.main)
         self.assertIn('actions   = ["bedrock-agentcore:InvokeGateway"]', self.main)
         self.assertIn('resources = [statement.value]', self.main)
@@ -55,13 +55,21 @@ class AgentCoreHarnessChatOnlyTests(unittest.TestCase):
         self.assertIn('"@github-read/listRepositories"', self.main)
         self.assertIn('"@github-read/getRepository"', self.main)
         self.assertIn('"@github-read/getFile"', self.main)
+        self.assertIn('"@github-read/pullRepository"', self.main)
+        self.assertIn('"@github-read/createBranch"', self.main)
+        self.assertIn('"@github-read/putFile"', self.main)
+        self.assertIn('"@github-read/createPullRequest"', self.main)
+        self.assertIn('"@github-read/mergePullRequest"', self.main)
+        self.assertIn('"@github-read/createIssue"', self.main)
 
-    def test_prompt_describes_only_the_attached_read_tools(self) -> None:
+    def test_prompt_describes_the_attached_tools_as_autonomous(self) -> None:
         self.assertIn("`listRepositories`", self.prompt)
         self.assertIn("`getRepository`", self.prompt)
         self.assertIn("`getFile`", self.prompt)
         self.assertIn("Never claim a tool call", self.prompt)
-        self.assertIn("Do not attempt mutations", self.prompt)
+        self.assertIn("`putFile`", self.prompt)
+        self.assertIn("`pullRepository`", self.prompt)
+        self.assertIn("Do not\nask for a confirmation turn", self.prompt)
 
     def test_execution_role_and_harness_have_no_unreviewed_capabilities(self) -> None:
         for forbidden in (
