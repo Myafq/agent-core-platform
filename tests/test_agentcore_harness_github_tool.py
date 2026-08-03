@@ -56,7 +56,18 @@ class AgentCoreHarnessChatOnlyTests(unittest.TestCase):
         self.assertIn('resources = [statement.value]', self.main)
         self.assertIn('container_repository_arn', self.variables)
         self.assertIn('container_repository_arn is required when container_uri is set', self.main)
-        self.assertIn('container_repository_arn = "arn:aws:ecr:', self.composition)
+        self.assertRegex(self.composition, r'container_repository_arn\s+= "arn:aws:ecr:')
+
+    def test_workspace_mount_uses_vpc_and_one_efs_access_point(self) -> None:
+        self.assertIn('sid = "MountCodingWorkspace"', self.main)
+        self.assertIn('"elasticfilesystem:ClientMount"', self.main)
+        self.assertIn('"elasticfilesystem:ClientWrite"', self.main)
+        self.assertIn('elasticfilesystem:AccessPointArn', self.main)
+        self.assertIn('resource "terraform_data" "workspace_environment"', self.main)
+        self.assertIn('networkMode = "VPC"', self.main)
+        self.assertIn('efsAccessPoint', self.main)
+        self.assertIn('workspace_mount_path must be directly under /mnt', self.variables)
+        self.assertIn('dependency "workspace"', self.composition)
 
     def test_harness_attaches_the_iam_github_gateway_tools(self) -> None:
         self.assertIn('sid       = "InvokeGitHubReadGateway"', self.main)

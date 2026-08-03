@@ -119,9 +119,19 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   scan-on-push, and 10-image retention. Its ARM64 coding image is published at
   `sha256:455de191c7d1339fb4124c8570cd71b3b4bda14223c2ecd8bbce41dc2c658d3b`
   and is bound in source. The 2026-08-03 Harness init/validate/plan passed;
-  its reviewed plan has two in-place updates only: container environment and
-  allow-list plus repository-scoped private-ECR pull permissions. The deployed
-  Harness remains on its current managed environment until that plan is applied.
+  the operator then applied its two in-place updates: container environment and
+  allow-list plus repository-scoped private-ECR pull permissions. Read-only
+  verification found Harness version 14 `READY`, the exact image digest, and
+  built-in shell and file-operation tools. VPC/EFS attachment and live coding
+  invocation remain unverified.
+- The source now defines the coding workspace as a separate unit: two private
+  subnets with same-AZ EFS mount targets, one development NAT gateway, encrypted
+  EFS with backups and an access point at `/workspace`, plus HTTPS/DNS/NFS-only
+  runtime security-group rules. Its 2026-08-03 plan passed with 23 creates and
+  no change/destroy. Harness source adds scoped `ClientMount`/`ClientWrite`
+  permissions and the controlled VPC/EFS environment update; validation passes
+  with workspace mock outputs. Apply is not authorized; the Harness must be
+  replanned against real workspace outputs after workspace apply.
 - Kimi's `chat_completions` tool-call protocol incompatibility remains known.
   The pending Sonnet change uses native `converse_stream`; a restricted tool
   retry remains required after apply.
@@ -179,5 +189,6 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
 
 ## Next
 
-Next: create/push the custom ECR image, provision the native Harness workspace,
-then run one clone/edit/test/commit/push/PR proof.
+Next: review/apply the workspace unit, replan/apply the Harness VPC/EFS
+attachment using its real outputs, then run one clone/edit/test/commit/push/PR
+proof.

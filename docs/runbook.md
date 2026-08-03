@@ -119,7 +119,22 @@ GitHub CLI, Python, Make, jq, and the project toolchain. Configure the Harness
 with VPC subnets/security groups and an EFS access point mounted at
 `/mnt/workspace`; VPC egress needs NAT for GitHub and ECR Public access.
 
-Plan platform first while the transition Gateway exists:
+Plan the coding workspace before the Harness because its outputs supply the
+private subnets, runtime security group, and EFS access point:
+
+```shell
+cd live/dev/us-east-1/platform/agentcore-workspace
+mise exec -- terragrunt init
+mise exec -- terragrunt validate
+mise exec -- terragrunt plan -out=plan.tfplan
+```
+
+Accept only the isolated VPC, two private subnets and EFS mount targets, one
+development NAT gateway, encrypted EFS with backups, an access point, and
+HTTPS/DNS/NFS security rules. Apply requires explicit authorization. After a
+workspace apply, replan the Harness; do not apply its mock-output validation.
+
+Plan the transition Gateway while it remains:
 
 ```shell
 ./scripts/package_github_tool.sh
