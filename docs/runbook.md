@@ -115,26 +115,11 @@ agents/github-assistant
 
 Build the Harness coding image for `linux/arm64`, publish it to the private ECR
 repository, then plan the Harness-native workspace. The image must include Git,
-GitHub CLI, Python, Make, jq, and the project toolchain. Configure the Harness
-with VPC subnets/security groups and an EFS access point mounted at
-`/mnt/workspace`; VPC egress needs NAT for GitHub and ECR Public access.
-
-Plan the coding workspace before the Harness because its outputs supply the
-private subnets, runtime security group, and EFS access point:
-
-```shell
-cd live/dev/us-east-1/platform/agentcore-workspace
-mise exec -- terragrunt init
-mise exec -- terragrunt validate
-mise exec -- terragrunt plan -out=plan.tfplan
-```
-
-Accept only the isolated VPC, two private subnets and EFS mount targets, one
-development NAT gateway, encrypted EFS with backups, an access point, and
-HTTPS/DNS/NFS security rules. Apply requires explicit authorization. Before
-the workspace exists, the Harness unit permits a structural `plan` with
-shape-valid mock outputs; it is never an apply plan. After a workspace apply,
-replan the Harness using real outputs.
+GitHub CLI, Python, Make, jq, and the project toolchain. The home-lab Harness
+uses AgentCore-managed session storage at `/mnt/workspace`; it stays in public
+network mode and creates no VPC, NAT, EFS, or dependency-mock infrastructure.
+Use the same `runtimeSessionId` to resume the workspace. Add EFS only after a
+shared durable workspace becomes necessary.
 
 Plan the transition Gateway while it remains:
 
@@ -160,9 +145,10 @@ mise exec -- terragrunt plan -out=plan.tfplan
 ```
 
 Accept only the model/Harness resources, private-ECR image pull permission,
-explicit built-in shell/file allow-list, scoped VPC/EFS IAM, and the exact
-filesystem mount. Reject Cognito/JWT authorizers, native GitHub OAuth, Token
-Vault access, arbitrary host mounts, or broad EFS/ECR permissions.
+explicit built-in shell/file allow-list, public-mode session storage at the
+exact mount path, and no VPC/NAT/EFS resources. Reject Cognito/JWT authorizers,
+native GitHub OAuth, Token Vault access, arbitrary host mounts, or broad ECR
+permissions.
 
 Plans are safe. Apply requires explicit authorization immediately before use.
 Never run `terragrunt run --all apply`.

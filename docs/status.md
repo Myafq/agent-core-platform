@@ -107,14 +107,12 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   The agent does not insert a confirmation turn. Offline validation and a live
   repository-list request passed; App write permissions and live mutation proof
   remain pending.
-- `HARNESS-003` is in progress. Source now has an ARM64 Amazon Linux coding
-  image with Git, GitHub CLI, Python, Make, jq, and Unix tooling. The Harness
-  module accepts an immutable private-ECR image and enables built-in shell and
-  file operations in its next revision. ECR publishing, VPC/NAT, EFS access
-  point, runtime filesystem attachment, and live coding-session proof remain
-  pending. The installed provider supports the container artifact but not the
-  Harness VPC/filesystem fields; those require the controlled post-create API
-  update used for `apiFormat`.
+- `HARNESS-003` is in progress. Source has an ARM64 Amazon Linux coding image
+  with Git, GitHub CLI, Python, Make, jq, and Unix tooling. The Harness module
+  binds the immutable private-ECR image and enables built-in shell/file tools.
+  The home-lab workspace uses AgentCore-managed per-session storage at
+  `/mnt/workspace`, not VPC/NAT/EFS; the installed provider requires the
+  controlled post-create filesystem update used for `apiFormat`.
 - The private ECR repository `github-app-tool-coding` has immutable tags,
   scan-on-push, and 10-image retention. Its ARM64 coding image is published at
   `sha256:455de191c7d1339fb4124c8570cd71b3b4bda14223c2ecd8bbce41dc2c658d3b`
@@ -122,18 +120,16 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   the operator then applied its two in-place updates: container environment and
   allow-list plus repository-scoped private-ECR pull permissions. Read-only
   verification found Harness version 14 `READY`, the exact image digest, and
-  built-in shell and file-operation tools. VPC/EFS attachment and live coding
-  invocation remain unverified.
-- The source now defines the coding workspace as a separate unit: two private
-  subnets with same-AZ EFS mount targets, one development NAT gateway, encrypted
-  EFS with backups and an access point at `/workspace`, plus HTTPS/DNS/NFS-only
-  runtime security-group rules. Its 2026-08-03 plan passed with 23 creates and
-  no change/destroy. Harness source adds scoped `ClientMount`/`ClientWrite`
-  permissions and the controlled VPC/EFS environment update; validation and a
-  structural mock plan pass before workspace state exists. Mock output is
-  permitted for Harness `plan`, never `apply`. Apply is not authorized; the
-  Harness must be replanned against real workspace outputs after workspace
-  apply.
+  built-in shell and file-operation tools. Session-storage attachment and live
+  coding invocation remain unverified.
+- The unapplied VPC/NAT/EFS workspace plan and its Harness mock-output
+  dependency were removed on 2026-08-03 to avoid idle home-lab network cost.
+  Source now requests AgentCore-managed session storage at `/mnt/workspace`
+  while retaining public network mode. It adds no EFS IAM permissions, VPC,
+  NAT, security groups, or customer-managed filesystem resources. Apply is not
+  authorized. Its init/validate and reviewed plan passed: one controlled
+  environment update, with no AWS resources created, changed, or destroyed.
+  Use the same `runtimeSessionId` to resume the workspace.
 - Kimi's `chat_completions` tool-call protocol incompatibility remains known.
   The pending Sonnet change uses native `converse_stream`; a restricted tool
   retry remains required after apply.
@@ -168,11 +164,12 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   in-place updates; post-apply `get-harness` reported `READY`, version 3, no
   tools/skills, `allowedTools: ["@disabled"]`, and the chat-only prompt. The
   follow-up plan was no-change.
-- The active IAM Harness is version 13 and `READY`; it has one IAM GitHub
+- The active IAM Harness is version 14 and `READY`; it has one IAM GitHub
   Gateway tool and all eight deployed operations. A direct IAM
   Harness-to-Gateway repository-list invocation succeeded.
-- The deployed Harness does not yet have the custom container, built-in
-  shell/file allow-list, VPC attachment, or EFS mount.
+- The deployed Harness has the custom container and built-in shell/file
+  allow-list. It intentionally has no VPC or EFS mount; the public-mode
+  session-storage attachment is not applied yet.
 - No Telegram/Slack-to-GitHub invocation or live mutation has succeeded.
 - The installed GitHub App is not yet verified with `Contents: Read and write`,
   `Pull requests: Read and write`, and `Issues: Read and write`; the new write
@@ -191,6 +188,5 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
 
 ## Next
 
-Next: review/apply the workspace unit, replan/apply the Harness VPC/EFS
-attachment using its real outputs, then run one clone/edit/test/commit/push/PR
-proof.
+Next: review/apply the in-place Harness session-storage update, then run one
+clone/edit/test/commit/push/PR proof using one `runtimeSessionId`.

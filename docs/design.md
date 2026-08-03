@@ -129,10 +129,13 @@ authorization-code OAuth. Its custom ARM64 container supplies Git, GitHub CLI,
 and the project toolchain; built-in shell and file operations are explicitly
 allowed for repository work.
 
-Attach EFS through an access point at `/mnt/workspace` in VPC mode. A coding
-session clones and edits source, runs tests, and uses Git/GitHub CLI from that
-same workspace. The EFS mount is shared durable storage; session IDs select the
-active working session, not GitHub user identity.
+Mount AgentCore-managed session storage at `/mnt/workspace`. A coding session
+clones and edits source, runs tests, and uses Git/GitHub CLI from that same
+workspace. Storage persists across stop/resume only for the same
+`runtimeSessionId`; it is neither a cross-user identity mechanism nor shared
+durable storage. This avoids an always-on VPC, NAT gateway, and EFS bill in the
+home-lab deployment. Add EFS later only when cross-session/shared persistence
+is an actual requirement.
 
 The execution role gets only model invocation, required Harness-managed
 session/memory access, observability, and `InvokeGateway` on the selected

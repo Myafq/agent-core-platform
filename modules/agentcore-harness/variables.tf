@@ -80,42 +80,14 @@ variable "container_repository_arn" {
   nullable    = true
 }
 
-variable "workspace_subnet_ids" {
-  description = "Private subnets for the Harness VPC environment; enable the EFS workspace when set."
-  type        = list(string)
-  default     = null
-  nullable    = true
-}
-
-variable "workspace_security_group_ids" {
-  description = "Security groups for the Harness VPC environment; enable the EFS workspace when set."
-  type        = list(string)
-  default     = null
-  nullable    = true
-}
-
-variable "workspace_efs_access_point_arn" {
-  description = "EFS access point mounted at workspace_mount_path when the Harness uses VPC mode."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
-variable "workspace_efs_file_system_arn" {
-  description = "EFS file system ARN used to scope ClientMount and ClientWrite."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
-variable "workspace_mount_path" {
-  description = "Absolute path under /mnt at which the EFS workspace is mounted."
+variable "session_storage_mount_path" {
+  description = "Absolute path under /mnt for per-session managed coding storage."
   type        = string
   default     = "/mnt/workspace"
 
   validation {
-    condition     = can(regex("^/mnt/[^/]+$", var.workspace_mount_path))
-    error_message = "workspace_mount_path must be directly under /mnt."
+    condition     = can(regex("^/mnt/[^/]+$", var.session_storage_mount_path))
+    error_message = "session_storage_mount_path must be directly under /mnt."
   }
 }
 

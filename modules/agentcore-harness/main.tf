@@ -18,7 +18,6 @@ locals {
     Agent       = var.name
     Description = var.description
   })
-  workspace_enabled = var.workspace_efs_access_point_arn != null
 }
 
 data "aws_caller_identity" "current" {}
@@ -130,25 +129,6 @@ data "aws_iam_policy_document" "execution" {
   }
 
   dynamic "statement" {
-    for_each = local.workspace_enabled ? [var.workspace_efs_access_point_arn] : []
-
-    content {
-      sid = "MountCodingWorkspace"
-      actions = [
-        "elasticfilesystem:ClientMount",
-        "elasticfilesystem:ClientWrite",
-      ]
-      resources = [var.workspace_efs_file_system_arn]
-
-      condition {
-        test     = "ArnEquals"
-        variable = "elasticfilesystem:AccessPointArn"
-        values   = [statement.value]
-      }
-    }
-  }
-
-  dynamic "statement" {
     for_each = var.container_uri == null ? [] : [var.container_repository_arn]
 
     content {
@@ -184,16 +164,6 @@ resource "aws_iam_role" "this" {
       error_message = "container_repository_arn is required when container_uri is set."
     }
 
-    precondition {
-      condition = !local.workspace_enabled || (
-        var.workspace_efs_file_system_arn != null &&
-        var.workspace_subnet_ids != null &&
-        length(var.workspace_subnet_ids) >= 2 &&
-        var.workspace_security_group_ids != null &&
-        length(var.workspace_security_group_ids) > 0
-      )
-      error_message = "EFS workspace requires a file system ARN, at least two private subnets, and a runtime security group."
-    }
   }
 }
 
@@ -291,22 +261,17 @@ resource "terraform_data" "model_api_format" {
   }
 }
 
-# Provider 6.55.0 lacks Harness VPC and filesystem fields. Keep the desired
-# environment here and update it only after Terraform creates the EFS resources
-# and attaches the execution-role EFS permissions.
-resource "terraform_data" "workspace_environment" {
-  count = local.workspace_enabled ? 1 : 0
-
+# Provider 6.55.0 lacks Harness filesystem fields. Session storage is managed
+# by AgentCore, keeps the Harness in public network mode, and has no VPC/NAT
+# resources or customer-managed storage.
+resource "terraform_data" "session_storage_environment" {
   triggers_replace = {
-    harness_arn        = aws_bedrockagentcore_harness.this.arn
-    access_point_arn   = var.workspace_efs_access_point_arn
-    mount_path         = var.workspace_mount_path
-    subnet_ids         = join(",", sort(var.workspace_subnet_ids))
-    security_group_ids = join(",", sort(var.workspace_security_group_ids))
+    harness_arn = aws_bedrockagentcore_harness.this.arn
+    mount_path  = var.session_storage_mount_path
   }
 
   provisioner "local-exec" {
-    command = "aws bedrock-agentcore-control update-harness --region '${data.aws_region.current.region}' --harness-id '${split("/", aws_bedrockagentcore_harness.this.arn)[1]}' --environment '${jsonencode({ agentCoreRuntimeEnvironment = { lifecycleConfiguration = { idleRuntimeSessionTimeout = 900, maxLifetime = 28800 }, networkConfiguration = { networkMode = "VPC", networkModeConfig = { subnets = var.workspace_subnet_ids, securityGroups = var.workspace_security_group_ids } }, filesystemConfigurations = [{ efsAccessPoint = { accessPointArn = var.workspace_efs_access_point_arn, mountPath = var.workspace_mount_path } }] } })}'"
+    command = "aws bedrock-agentcore-control update-harness --region '${data.aws_region.current.region}' --harness-id '${split("/", aws_bedrockagentcore_harness.this.arn)[1]}' --environment '${jsonencode({ agentCoreRuntimeEnvironment = { lifecycleConfiguration = { idleRuntimeSessionTimeout = 900, maxLifetime = 28800 }, networkConfiguration = { networkMode = "PUBLIC" }, filesystemConfigurations = [{ sessionStorage = { mountPath = var.session_storage_mount_path } }] } })}'"
   }
 
   depends_on = [
