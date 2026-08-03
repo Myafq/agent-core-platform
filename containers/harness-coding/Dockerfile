@@ -5,7 +5,6 @@ ARG GH_VERSION=2.68.1
 RUN dnf install -y \
       bash \
       ca-certificates \
-      curl \
       findutils \
       git \
       gzip \

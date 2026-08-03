@@ -23,7 +23,10 @@ class AgentCoreHarnessChatOnlyTests(unittest.TestCase):
         self.assertIn('source = "../../../../../modules/agentcore-harness"', self.composition)
         self.assertIn('dependency "github_app_tool"', self.composition)
         self.assertIn('config_path = "../../platform/github-app-tool"', self.composition)
-        self.assertIn("gateway_arn     = dependency.github_app_tool.outputs.gateway_arn", self.composition)
+        self.assertRegex(
+            self.composition,
+            r"gateway_arn\s+= dependency\.github_app_tool\.outputs\.gateway_arn",
+        )
         self.assertNotIn("oauth", self.composition.lower())
         self.assertNotIn("jwt", self.composition.lower())
 
@@ -44,6 +47,16 @@ class AgentCoreHarnessChatOnlyTests(unittest.TestCase):
         self.assertIn('startswith(var.model_id, "global.")', self.main)
         self.assertIn('inference-profile/${var.model_id}', self.main)
         self.assertIn('bedrock:*::foundation-model/${local.foundation_model_id}', self.main)
+
+    def test_private_coding_image_pull_is_scoped_to_its_repository(self) -> None:
+        self.assertIn('sid       = "GetPrivateEcrToken"', self.main)
+        self.assertIn('sid = "PullCodingContainer"', self.main)
+        self.assertIn('"ecr:BatchGetImage"', self.main)
+        self.assertIn('"ecr:GetDownloadUrlForLayer"', self.main)
+        self.assertIn('resources = [statement.value]', self.main)
+        self.assertIn('container_repository_arn', self.variables)
+        self.assertIn('container_repository_arn is required when container_uri is set', self.main)
+        self.assertIn('container_repository_arn = "arn:aws:ecr:', self.composition)
 
     def test_harness_attaches_the_iam_github_gateway_tools(self) -> None:
         self.assertIn('sid       = "InvokeGitHubReadGateway"', self.main)

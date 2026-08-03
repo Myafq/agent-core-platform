@@ -36,16 +36,6 @@ data "aws_iam_policy_document" "assume_role" {
       identifiers = ["bedrock-agentcore.amazonaws.com"]
     }
   }
-
-  dynamic "statement" {
-    for_each = var.container_uri == null ? [] : [var.container_uri]
-
-    content {
-      sid       = "PullCodingContainer"
-      actions   = ["ecr:GetAuthorizationToken"]
-      resources = ["*"]
-    }
-  }
 }
 
 data "aws_iam_policy_document" "execution" {
@@ -129,6 +119,30 @@ data "aws_iam_policy_document" "execution" {
   }
 
   dynamic "statement" {
+    for_each = var.container_uri == null ? [] : [var.container_repository_arn]
+
+    content {
+      sid       = "GetPrivateEcrToken"
+      actions   = ["ecr:GetAuthorizationToken"]
+      resources = ["*"]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.container_uri == null ? [] : [var.container_repository_arn]
+
+    content {
+      sid = "PullCodingContainer"
+      actions = [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer",
+      ]
+      resources = [statement.value]
+    }
+  }
+
+  dynamic "statement" {
     for_each = var.gateway_arn == null ? [] : [var.gateway_arn]
 
     content {
@@ -143,6 +157,13 @@ resource "aws_iam_role" "this" {
   name               = "${var.name}-agentcore-harness"
   assume_role_policy = data.aws_iam_policy_document.assume_role.json
   tags               = local.common_tags
+
+  lifecycle {
+    precondition {
+      condition     = var.container_uri == null || var.container_repository_arn != null
+      error_message = "container_repository_arn is required when container_uri is set."
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "execution" {

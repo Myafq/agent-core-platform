@@ -115,9 +115,13 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   pending. The installed provider supports the container artifact but not the
   Harness VPC/filesystem fields; those require the controlled post-create API
   update used for `apiFormat`.
-- The private ECR repository `github-app-tool-coding` was created 2026-07-26
-  with immutable tags, scan-on-push, and 10-image retention. No image has been
-  pushed and the deployed Harness remains on its current managed environment.
+- The private ECR repository `github-app-tool-coding` has immutable tags,
+  scan-on-push, and 10-image retention. Its ARM64 coding image is published at
+  `sha256:455de191c7d1339fb4124c8570cd71b3b4bda14223c2ecd8bbce41dc2c658d3b`
+  and is bound in source. The 2026-08-03 Harness init/validate/plan passed;
+  its reviewed plan has two in-place updates only: container environment and
+  allow-list plus repository-scoped private-ECR pull permissions. The deployed
+  Harness remains on its current managed environment until that plan is applied.
 - Kimi's `chat_completions` tool-call protocol incompatibility remains known.
   The pending Sonnet change uses native `converse_stream`; a restricted tool
   retry remains required after apply.

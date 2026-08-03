@@ -73,6 +73,13 @@ variable "container_uri" {
   nullable    = true
 }
 
+variable "container_repository_arn" {
+  description = "Private ECR repository ARN from which the Harness may pull container_uri."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
