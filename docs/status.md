@@ -129,9 +129,11 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   EFS with backups and an access point at `/workspace`, plus HTTPS/DNS/NFS-only
   runtime security-group rules. Its 2026-08-03 plan passed with 23 creates and
   no change/destroy. Harness source adds scoped `ClientMount`/`ClientWrite`
-  permissions and the controlled VPC/EFS environment update; validation passes
-  with workspace mock outputs. Apply is not authorized; the Harness must be
-  replanned against real workspace outputs after workspace apply.
+  permissions and the controlled VPC/EFS environment update; validation and a
+  structural mock plan pass before workspace state exists. Mock output is
+  permitted for Harness `plan`, never `apply`. Apply is not authorized; the
+  Harness must be replanned against real workspace outputs after workspace
+  apply.
 - Kimi's `chat_completions` tool-call protocol incompatibility remains known.
   The pending Sonnet change uses native `converse_stream`; a restricted tool
   retry remains required after apply.

@@ -131,8 +131,10 @@ mise exec -- terragrunt plan -out=plan.tfplan
 
 Accept only the isolated VPC, two private subnets and EFS mount targets, one
 development NAT gateway, encrypted EFS with backups, an access point, and
-HTTPS/DNS/NFS security rules. Apply requires explicit authorization. After a
-workspace apply, replan the Harness; do not apply its mock-output validation.
+HTTPS/DNS/NFS security rules. Apply requires explicit authorization. Before
+the workspace exists, the Harness unit permits a structural `plan` with
+shape-valid mock outputs; it is never an apply plan. After a workspace apply,
+replan the Harness using real outputs.
 
 Plan the transition Gateway while it remains:
 

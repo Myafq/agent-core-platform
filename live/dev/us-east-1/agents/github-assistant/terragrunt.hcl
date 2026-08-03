@@ -14,7 +14,10 @@ dependency "github_app_tool" {
 dependency "workspace" {
   config_path = "../../platform/agentcore-workspace"
 
-  mock_outputs_allowed_terraform_commands = ["validate"]
+  # The workspace has no state before its first apply. Allow a structural
+  # Harness plan with shape-valid placeholders, but never allow apply with
+  # these values. Replan after workspace outputs exist.
+  mock_outputs_allowed_terraform_commands = ["validate", "plan"]
   mock_outputs = {
     private_subnet_ids        = ["subnet-00000000000000001", "subnet-00000000000000002"]
     runtime_security_group_id = "sg-00000000000000001"
