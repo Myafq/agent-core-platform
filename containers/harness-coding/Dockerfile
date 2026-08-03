@@ -12,6 +12,7 @@ RUN dnf install -y \
       make \
       procps-ng \
       python3 \
+      python3-pip \
       tar \
       unzip \
       which \
@@ -20,6 +21,11 @@ RUN dnf install -y \
       --output /tmp/gh.tar.gz \
     && tar -xzf /tmp/gh.tar.gz -C /tmp \
     && install -m 0755 "/tmp/gh_${GH_VERSION}_linux_arm64/bin/gh" /usr/local/bin/gh \
+    && python3 -m pip install --no-cache-dir boto3 \
     && rm -rf /tmp/gh* /var/cache/dnf
+
+COPY github-app-token /usr/local/bin/github-app-token
+COPY github-app-git-credential /usr/local/bin/github-app-git-credential
+RUN chmod 0755 /usr/local/bin/github-app-token /usr/local/bin/github-app-git-credential
 
 WORKDIR /mnt/workspace

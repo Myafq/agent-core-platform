@@ -18,6 +18,7 @@ class AgentCoreHarnessChatOnlyTests(unittest.TestCase):
         self.variables = (MODULE / "variables.tf").read_text(encoding="utf-8")
         self.composition = COMPOSITION.read_text(encoding="utf-8")
         self.prompt = PROMPT.read_text(encoding="utf-8")
+        self.coding_image = ROOT / "containers" / "harness-coding"
 
     def test_composition_consumes_only_the_platform_gateway_output(self) -> None:
         self.assertIn('source = "../../../../../modules/agentcore-harness"', self.composition)
@@ -92,6 +93,9 @@ class AgentCoreHarnessChatOnlyTests(unittest.TestCase):
         self.assertIn("`putFile`", self.prompt)
         self.assertIn("`pullRepository`", self.prompt)
         self.assertIn("Do not\nask for a confirmation turn", self.prompt)
+        self.assertIn('GH_TOKEN="$(github-app-token OWNER REPO)" gh <command>', self.prompt)
+        self.assertIn("github-app-git-credential", self.prompt)
+        self.assertIn("credential.useHttpPath=true", self.prompt)
 
     def test_execution_role_and_harness_have_no_unreviewed_capabilities(self) -> None:
         for forbidden in (
@@ -108,6 +112,23 @@ class AgentCoreHarnessChatOnlyTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden.lower(), self.main.lower())
             self.assertNotIn(forbidden.lower(), self.variables.lower())
+
+    def test_temporary_git_credential_is_brokered_not_configured(self) -> None:
+        self.assertIn('sid       = "MintTemporaryGitHubCredential"', self.main)
+        self.assertIn('actions   = ["lambda:InvokeFunction"]', self.main)
+        self.assertIn("GITHUB_APP_TOKEN_BROKER_FUNCTION_NAME", self.main)
+        self.assertIn("AWS_REGION", self.main)
+        self.assertIn("environment_variables = var.github_credential_broker_function_name", self.main)
+        self.assertNotIn('resource "terraform_data" "credential_broker_environment"', self.main)
+        self.assertNotIn("GITHUB_TOKEN", self.main)
+        self.assertIn("github-app-token", (self.coding_image / "Dockerfile").read_text(encoding="utf-8"))
+        token_helper = (self.coding_image / "github-app-token").read_text(encoding="utf-8")
+        credential_helper = (self.coding_image / "github-app-git-credential").read_text(encoding="utf-8")
+        self.assertIn('"operation": "mintGitCredential"', token_helper)
+        self.assertIn("GITHUB_APP_TOKEN_BROKER_FUNCTION_NAME", token_helper)
+        self.assertIn('os.environ.get("AWS_REGION")', token_helper)
+        self.assertIn("github-app-token", credential_helper)
+        self.assertNotIn("GITHUB_APP_PRIVATE_KEY", token_helper)
 
     def test_api_format_workaround_remains_explicit(self) -> None:
         self.assertIn('resource "terraform_data" "model_api_format"', self.main)

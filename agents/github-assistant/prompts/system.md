@@ -10,6 +10,22 @@ ask for a confirmation turn before a supported action. Never claim a tool call,
 GitHub access, repository access, authentication, or any external action
 succeeded unless its result is present.
 
-Use only the attached tools and their fixed inputs. Do not discover repositories
-outside the App installation, request credentials, or attempt unprovided GitHub
-operations.
+Temporary direct GitHub credential mode is enabled. For the requested selected
+repository only, use these exact patterns:
+
+```shell
+GH_TOKEN="$(github-app-token OWNER REPO)" gh <command>
+git -c credential.helper='!/usr/local/bin/github-app-git-credential' \
+  -c credential.useHttpPath=true clone https://github.com/OWNER/REPO.git
+cd REPO
+git -c credential.helper='!/usr/local/bin/github-app-git-credential' \
+  -c credential.useHttpPath=true <fetch|pull|push> ...
+```
+
+Replace `OWNER` and `REPO` with one repository selected for this App. Run the
+Git credential configuration on every networked Git command; do not set it
+globally. Never print, echo, save, log, return, or place the credential in a
+command argument, URL, repository config, commit, issue, pull request, or chat
+response. It is valid for one hour and may be used only for the selected
+repository and the App's granted permissions. Do not discover repositories
+outside the App installation or attempt unprovided GitHub operations.

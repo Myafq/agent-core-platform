@@ -121,37 +121,57 @@ network mode and creates no VPC, NAT, EFS, or dependency-mock infrastructure.
 Use the same `runtimeSessionId` to resume the workspace. Add EFS only after a
 shared durable workspace becomes necessary.
 
-Plan the transition Gateway while it remains:
+Temporary home-lab direct-credential mode: the existing broker Lambda retains
+the App private key. The Harness can invoke that one function through its
+execution role, and the image helper mints a fresh selected-repository token
+for each `git`/`gh` authentication. No token is a Terraform input, Harness
+environment variable, or persistent file. This is intentionally not
+credential-isolated: a root-capable Harness agent can retrieve and exfiltrate
+the token. Do not use this mode for production.
+
+Build and publish the changed ARM64 image before planning the Harness:
 
 ```shell
-./scripts/package_github_tool.sh
-cd live/dev/us-east-1/platform/github-app-tool
-mise exec -- terragrunt init
-mise exec -- terragrunt validate
-mise exec -- terragrunt plan -out=plan.tfplan
+scripts/build_harness_coding_image.sh \
+  803629127460.dkr.ecr.us-east-1.amazonaws.com/github-app-tool-coding \
+  <immutable-new-tag>
 ```
 
-Accept only the scoped Gateway/Lambda resources, exact tool schemas, logs, and
-roles. Reject private-key values, broad Lambda/Gateway IAM, OAuth/Token Vault
-resources, repository wildcards, or arbitrary HTTP/Git execution.
-
-Plan the Harness after platform outputs exist:
+Update `container_uri` to the resulting immutable digest. Then plan all units
+from the environment root:
 
 ```shell
-cd live/dev/us-east-1/agents/github-assistant
-mise exec -- terragrunt init
-mise exec -- terragrunt validate
-mise exec -- terragrunt plan -out=plan.tfplan
+cd live/dev/us-east-1
+mise exec -- terragrunt run --all -- plan
 ```
 
-Accept only the model/Harness resources, private-ECR image pull permission,
-explicit built-in shell/file allow-list, public-mode session storage at the
-exact mount path, and no VPC/NAT/EFS resources. Reject Cognito/JWT authorizers,
-native GitHub OAuth, Token Vault access, arbitrary host mounts, or broad ECR
-permissions.
+The Harness dependency shallow-merges real platform state with checked-in,
+non-secret broker-output mocks for `validate` and `plan`. This lets the graph
+plan before a new platform output exists in state. Mocks are not available to
+`apply`; it consumes real dependency state after the platform update.
+
+After explicit apply authorization and one `runtimeSessionId`, use one selected
+repository only. Keep the token out of shell output and Git configuration:
+
+```shell
+GH_TOKEN="$(github-app-token OWNER REPO)" gh repo view OWNER/REPO
+git -c credential.helper='!/usr/local/bin/github-app-git-credential' \
+  -c credential.useHttpPath=true clone https://github.com/OWNER/REPO.git
+```
+
+Record only redacted request IDs, commit SHA, test outcome, and PR URL. Replace
+this mode with a credential-isolated MCP/service worker before production use.
+
+Accept only the scoped Gateway/Lambda update; model/Harness changes; private-ECR
+image pull permission; one Lambda invocation permission; explicit built-in
+shell/file allow-list; public-mode session storage at the exact mount path; and
+no VPC/NAT/EFS resources. Reject private-key values, broad IAM, OAuth/Token
+Vault resources, repository wildcards, arbitrary HTTP/Git execution, or host
+mounts.
 
 Plans are safe. Apply requires explicit authorization immediately before use.
-Never run `terragrunt run --all apply`.
+After review, use `mise exec -- terragrunt run --all -- apply`; mocks remain
+disabled during apply.
 
 ## Channel smoke tests
 

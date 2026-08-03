@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from clients.telegram.bot import TELEGRAM_MESSAGE_LIMIT, incoming_message, split_message
+from clients.telegram.bot import TELEGRAM_MESSAGE_LIMIT, TelegramApiError, TelegramClient, TypingIndicator, incoming_message, split_message
 
 
 class TelegramBotTests(unittest.TestCase):
@@ -37,6 +37,31 @@ class TelegramBotTests(unittest.TestCase):
         self.assertIn('LOGGER.debug("Telegram private text accepted")', source)
         self.assertNotIn('failed: {error}', source)
         self.assertNotIn('result.get(\'description\'', source)
+
+    def test_typing_indicator_starts_and_stops_without_exposing_chat_state(self) -> None:
+        class FakeTelegram:
+            def __init__(self) -> None:
+                self.actions: list[int] = []
+
+            def send_typing(self, chat_id: int) -> None:
+                self.actions.append(chat_id)
+
+        telegram = FakeTelegram()
+        with TypingIndicator(telegram, 11, interval_seconds=60):  # type: ignore[arg-type]
+            pass
+        self.assertEqual(telegram.actions, [11])
+
+    def test_typing_failure_does_not_interrupt_the_harness_response(self) -> None:
+        class FailingTelegram:
+            def send_typing(self, chat_id: int) -> None:
+                raise TelegramApiError("safe")
+
+        with TypingIndicator(FailingTelegram(), 11, interval_seconds=60):  # type: ignore[arg-type]
+            pass
+
+    def test_typing_uses_the_standard_telegram_action(self) -> None:
+        source = (Path(__file__).parents[1] / "clients" / "telegram" / "bot.py").read_text(encoding="utf-8")
+        self.assertIn('self.call("sendChatAction", {"chat_id": chat_id, "action": "typing"})', source)
 
 
 if __name__ == "__main__":

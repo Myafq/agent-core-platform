@@ -12,6 +12,7 @@ from services.github_tool.broker import BrokerConfig, BrokerError, GitHubBroker,
 LOG = logging.getLogger(__name__)
 LOG.setLevel(os.getenv("LOG_LEVEL", "INFO"))
 ALLOWED_TOOLS = frozenset({"listRepositories", "getRepository", "getFile", "pullRepository", "createBranch", "putFile", "createPullRequest", "mergePullRequest", "createIssue"})
+DIRECT_CREDENTIAL_OPERATION = "mintGitCredential"
 
 
 class SecretsManagerReader:
@@ -50,8 +51,16 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     request_id = getattr(context, "aws_request_id", "unknown")
     try:
         config = BrokerConfig.from_environment()
+        broker = GitHubBroker(config, SecretsManagerReader(config.private_key_secret_key), PyJwtSigner(), UrllibGitHubClient())
+        if event.get("operation") == DIRECT_CREDENTIAL_OPERATION:
+            owner, repo = event.get("owner"), event.get("repo")
+            if not isinstance(owner, str) or not isinstance(repo, str):
+                raise BrokerError("invalid_request")
+            token = broker.mint_git_credential(owner, repo)
+            LOG.info("github request_id=%s operation=temporary_credential result=success", request_id)
+            return {"token": token}
         tool_name = gateway_tool_name(context)
-        result = GitHubBroker(config, SecretsManagerReader(config.private_key_secret_key), PyJwtSigner(), UrllibGitHubClient()).execute({"tool": tool_name, "arguments": event})
+        result = broker.execute({"tool": tool_name, "arguments": event})
         LOG.info("github request_id=%s tool=%s result=success", request_id, tool_name)
         return result
     except BrokerError as error:

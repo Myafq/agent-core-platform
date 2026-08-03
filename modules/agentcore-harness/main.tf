@@ -129,6 +129,16 @@ data "aws_iam_policy_document" "execution" {
   }
 
   dynamic "statement" {
+    for_each = var.github_credential_broker_function_arn == null ? [] : [var.github_credential_broker_function_arn]
+
+    content {
+      sid       = "MintTemporaryGitHubCredential"
+      actions   = ["lambda:InvokeFunction"]
+      resources = [statement.value]
+    }
+  }
+
+  dynamic "statement" {
     for_each = var.container_uri == null ? [] : [var.container_repository_arn]
 
     content {
@@ -238,6 +248,10 @@ resource "aws_bedrockagentcore_harness" "this" {
   max_tokens      = var.max_tokens
   timeout_seconds = var.timeout_seconds
   tags            = local.common_tags
+  environment_variables = var.github_credential_broker_function_name == null ? {} : {
+    GITHUB_APP_TOKEN_BROKER_FUNCTION_NAME = var.github_credential_broker_function_name
+    AWS_REGION                            = data.aws_region.current.region
+  }
 
   depends_on = [aws_iam_role_policy.execution]
 

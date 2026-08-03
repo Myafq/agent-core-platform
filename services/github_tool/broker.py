@@ -6,6 +6,7 @@ import base64
 import json
 import logging
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -18,6 +19,7 @@ from contracts.contract_validation import ContractError, validate_tool_invocatio
 LOG = logging.getLogger(__name__)
 API_VERSION = "2026-03-10"
 USER_AGENT = "agentcore-github-broker/1"
+REPOSITORY_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
 
 
 class BrokerError(RuntimeError):
@@ -99,8 +101,6 @@ class GitHubBroker:
             token = ""  # do not retain credentials beyond the request
 
     def _installation_token(self, repository: str | None, tool: str) -> str:
-        jwt_token = self.signer.sign(self.config.app_id, self.secrets.get_secret_string(self.config.private_key_secret_arn))
-        headers = self._headers(jwt_token)
         permissions = {
             "listRepositories": {"contents": "read"},
             "getRepository": {"contents": "read"},
@@ -112,9 +112,28 @@ class GitHubBroker:
             "mergePullRequest": {"contents": "write", "pull_requests": "write"},
             "createIssue": {"issues": "write"},
         }
-        request: dict[str, Any] = {"permissions": permissions[tool]}
+        repository_name = None if repository is None else repository.rsplit("/", 1)[1]
+        return self._installation_token_with_permissions(repository_name, permissions[tool])
+
+    def mint_git_credential(self, owner: str, repo: str) -> str:
+        """Return a temporary full-workflow token for one selected repository.
+
+        This is intentionally separate from Gateway tool responses. The caller
+        is the temporary, risk-accepted Harness credential helper.
+        """
+        if not REPOSITORY_PART.fullmatch(owner) or not REPOSITORY_PART.fullmatch(repo):
+            raise BrokerError("invalid_request")
+        return self._installation_token_with_permissions(
+            repo,
+            {"contents": "write", "pull_requests": "write", "issues": "write"},
+        )
+
+    def _installation_token_with_permissions(self, repository: str | None, permissions: dict[str, str]) -> str:
+        jwt_token = self.signer.sign(self.config.app_id, self.secrets.get_secret_string(self.config.private_key_secret_arn))
+        headers = self._headers(jwt_token)
+        request: dict[str, Any] = {"permissions": permissions}
         if repository is not None:
-            request["repositories"] = [repository.rsplit("/", 1)[1]]
+            request["repositories"] = [repository]
         status, body = self.http.request("POST", f"/app/installations/{self.config.installation_id}/access_tokens", headers, request)
         if status != 201 or not isinstance(body.get("token"), str):
             raise BrokerError("github_auth_failed")

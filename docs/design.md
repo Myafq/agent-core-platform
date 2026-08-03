@@ -137,6 +137,29 @@ durable storage. This avoids an always-on VPC, NAT gateway, and EFS bill in the
 home-lab deployment. Add EFS later only when cross-session/shared persistence
 is an actual requirement.
 
+### Temporary direct GitHub credentials
+
+This home-lab deployment temporarily accepts direct credential exposure to make
+native `git` and `gh` usable. The existing broker Lambda remains the only
+component with `secretsmanager:GetSecretValue` for the App private key. The
+Harness execution role can invoke only that Lambda. A helper in the custom
+image requests a fresh, one-repository installation token; the token is passed
+only to the immediate `git`/`gh` process and never becomes a Terraform value,
+Harness environment variable, or persisted credential file.
+
+This does not isolate credentials from the LLM. Harness command execution runs
+as root, its execution-role credentials are available inside the microVM, and a
+root-capable agent can call the helper or inspect a token-bearing process. A
+GitHub App installation token lasts one hour and can act within its selected
+repository and permission scope. Do not place the private key in the Harness,
+and do not print, log, prompt, commit, or otherwise persist the temporary
+token.
+
+This is a deliberate, temporary risk acceptance. Before production use,
+replace it with a credential-isolated MCP/service boundary: the remote worker
+must retain the token and offer structured Git operations rather than a
+token-returning interface.
+
 The execution role gets only model invocation, required Harness-managed
 session/memory access, observability, and `InvokeGateway` on the selected
 Gateway. Remove Token Vault, OAuth client-secret, and
@@ -328,3 +351,6 @@ validation task before implementation is called ready.
 8. New capabilities are deny-by-default and evidence-driven.
 9. Mutation is a different product, not an extra scope.
 10. Documentation states the highest verified layer only.
+11. Direct Harness GitHub tokens are a temporary home-lab risk acceptance.
+    Keep the App private key Lambda-only and replace token delivery with a
+    bounded server-side broker before production use.

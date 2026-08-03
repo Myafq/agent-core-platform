@@ -79,6 +79,16 @@ class GitHubBrokerTests(unittest.TestCase):
         self.broker.execute({"tool": "getRepository", "arguments": {"owner": "example-org", "repo": "example-repo"}})
         self.assertEqual(self.http.calls[0][3], {"permissions": {"contents": "read"}, "repositories": ["example-repo"]})
 
+    def test_temporary_git_credential_is_scoped_to_one_repository(self) -> None:
+        token = self.broker.mint_git_credential("example-org", "example-repo")
+        self.assertEqual(token, "INSTALLATION-TOKEN")
+        self.assertEqual(
+            self.http.calls[0][3],
+            {"permissions": {"contents": "write", "pull_requests": "write", "issues": "write"}, "repositories": ["example-repo"]},
+        )
+        with self.assertRaisesRegex(BrokerError, "invalid_request"):
+            self.broker.mint_git_credential("example-org", "../other")
+
     def test_get_file_accepts_github_base64_line_wrapping(self) -> None:
         self.http.request = lambda method, path, headers, body=None: (
             (201, {"token": "INSTALLATION-TOKEN"})

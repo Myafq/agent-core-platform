@@ -21,3 +21,4 @@ rm -f "${output_path}"
 cp -R "${root_dir}/services" "${root_dir}/contracts" "${root_dir}/schemas" "${build_dir}/"
 find "${build_dir}" -type d -name '__pycache__' -prune -exec rm -rf {} +
 (cd "${build_dir}" && zip -qr "${output_path}" .)
+echo "Done!"

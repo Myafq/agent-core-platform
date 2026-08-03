@@ -1,6 +1,6 @@
 # Current status
 
-Last updated: 2026-07-26
+Last updated: 2026-08-03
 
 ## Design decision
 
@@ -98,7 +98,8 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   the corrected policy uses a valid cross-region wildcard ARN.
 - `TG-001` is in progress. The Telegram adapter is transport-only: private
   text parsing, bot-derived tenant identity, configured-user allow-list,
-  long-polling offsets, and shared IAM Harness invocation are present in source.
+  long-polling offsets, an ephemeral typing action while Harness waits, and
+  shared IAM Harness invocation are present in source.
   Starting it requires a supplied bot token, one numeric Telegram user ID, and
   explicit authorization for live polling and invocation.
 - `WRITE-001` is in progress. The fixed, selected-repository branch, file,
@@ -120,8 +121,8 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   the operator then applied its two in-place updates: container environment and
   allow-list plus repository-scoped private-ECR pull permissions. Read-only
   verification found Harness version 15 `READY`, the exact image digest, and
-  built-in shell and file-operation tools. Session-storage attachment and live
-  coding invocation remain unverified.
+  built-in shell and file-operation tools. Live coding invocation has no
+  redacted evidence record.
 - The unapplied VPC/NAT/EFS workspace plan and its Harness mock-output
   dependency were removed on 2026-08-03 to avoid idle home-lab network cost.
   Source now requests AgentCore-managed session storage at `/mnt/workspace`
@@ -129,28 +130,45 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   NAT, security groups, or customer-managed filesystem resources. The operator
   applied its reviewed one-update plan; read-only verification found public
   mode and session storage at `/mnt/workspace`. Use the same
-  `runtimeSessionId` to resume the workspace.
-- Native coding is not yet authorized to GitHub: the Harness execution role has
-  no Secrets Manager/private-key access and the image has no credential source
-  for `git` or `gh`. The Gateway broker still mints the App installation
-  tokens, but it does not make one available to the workspace. Define a
-  short-lived, repository-scoped credential bridge before attempting native
-  clone, push, or PR proof.
-- Kimi's `chat_completions` tool-call protocol incompatibility remains known.
-  The pending Sonnet change uses native `converse_stream`; a restricted tool
-  retry remains required after apply.
+  `runtimeSessionId` to resume the workspace. The operator reports the smoke
+  appears to work; redacted same-session persistence evidence is not recorded.
+- Temporary direct credential source is implemented in source. The Lambda
+  package is built locally and the ARM64 credential-helper image is published
+  at `github-app-tool-coding@sha256:54450f0aeb93ae43d92f184802fbe12c271e7254eb5c73ae438b62a734b11686`, then pinned in source. The
+  existing broker Lambda retains the App private key and mints a fresh
+  selected-repository token when the Harness credential helper invokes it with
+  its scoped `lambda:InvokeFunction` role permission. The token is not in
+  Terraform, Harness configuration, or a persisted file, but is deliberately
+  reachable by the root-capable Harness and may be exfiltrated for its one-hour
+  lifetime. `terragrunt run --all -- plan` passed and was applied: platform was
+  exactly one in-place Lambda code update, with no Gateway/ECR/resource
+  replacement; Harness added one post-create environment update and changed
+  IAM/Harness configuration in place. Read-only verification found Lambda
+  `Active` with `Successful` update status; Harness v17 `READY`, the exact
+  credential-helper image digest, only
+  `GITHUB_APP_TOKEN_BROKER_FUNCTION_NAME=github-app-tool`, and one scoped
+  `lambda:InvokeFunction` permission. Harness dependency mocks shallow-merge
+  only new non-secret broker outputs for `validate`/`plan`. No live token mint,
+  clone, commit, push, PR, or channel test has run. Exact helper instructions
+  for `gh`, clone, and Git network commands are in source. The corrected
+  graph-wide plan has no platform changes; it updates Harness in place and
+  deletes only the obsolete Terraform bookkeeping object while retaining the
+  provider-owned non-secret broker function name. It is not yet applied. Live
+  agent diagnostics found no shell region; source now injects the non-secret
+  deployment region and helper explicitly selects it, requiring a new image and
+  Harness update. Once an operator-set region allowed invocation, the broker
+  safely reported `github_auth_failed` at token minting; verify installed App
+  write permissions before retrying.
+- Kimi's `chat_completions` tool-call protocol incompatibility is historical;
+  the active Harness uses Sonnet with `converse_stream`.
 
 ## Not verified
 
 - No Slack adapter exists.
-- No GitHub broker or Gateway tool invocation has succeeded. The GitHub App,
-  selected installation, secret binding, and exact repository scope still need
-  live verification before any read test.
-- No Terraform plan exists for the replacement architecture. Direct
-  Terragrunt init for `platform/github-app-tool` passed on 2026-07-25, but its
-  provider-backed validate did not start because the local AWS provider 6.55.0
-  exited before schema negotiation. Harness validation remains pending on the
-  same local provider issue.
+- A direct IAM Harness-to-Gateway request listed selected repositories. No
+  Telegram/Slack-to-GitHub invocation or live GitHub mutation has succeeded.
+- The current Harness plan and apply evidence is recorded above. No new plan
+  or apply was run during this status update.
 - ARCH-003 provider proof passed 2026-07-24: the minimal `AWS_IAM`
   Gateway/Lambda-target fixture initialized AWS provider 6.55.0 and passed
   `terraform validate`. It uses `GATEWAY_IAM_ROLE`, a Lambda ARN, and an inline
@@ -170,12 +188,12 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   in-place updates; post-apply `get-harness` reported `READY`, version 3, no
   tools/skills, `allowedTools: ["@disabled"]`, and the chat-only prompt. The
   follow-up plan was no-change.
-- The active IAM Harness is version 14 and `READY`; it has one IAM GitHub
+- The active IAM Harness is version 15 and `READY`; it has one IAM GitHub
   Gateway tool and all eight deployed operations. A direct IAM
   Harness-to-Gateway repository-list invocation succeeded.
-- The deployed Harness has the custom container and built-in shell/file
-  allow-list. It intentionally has no VPC or EFS mount; the public-mode
-  session-storage attachment is not applied yet.
+- The deployed Harness has the custom container, built-in shell/file allow-list,
+  and public-mode AgentCore-managed session storage at `/mnt/workspace`; it has
+  no VPC or EFS mount.
 - No Telegram/Slack-to-GitHub invocation or live mutation has succeeded.
 - The installed GitHub App is not yet verified with `Contents: Read and write`,
   `Pull requests: Read and write`, and `Issues: Read and write`; the new write
@@ -194,5 +212,7 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
 
 ## Next
 
-Next: review/apply the in-place Harness session-storage update, then run one
-clone/edit/test/commit/push/PR proof using one `runtimeSessionId`.
+Next: build/package, plan, and—only after immediate explicit authorization—apply
+the broker and Harness changes. Then run one redacted selected-repository
+clone/edit/test/commit/push/PR proof with one `runtimeSessionId`. Replace direct
+token delivery with credential-isolated MCP/service work before production use.

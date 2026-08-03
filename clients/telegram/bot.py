@@ -10,6 +10,7 @@ import logging
 import os
 from pathlib import Path
 import sys
+from threading import Event, Thread
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -25,6 +26,7 @@ from contracts.contract_validation import runtime_user_id
 
 TELEGRAM_API_URL = "https://api.telegram.org"
 TELEGRAM_MESSAGE_LIMIT = 4096
+TYPING_ACTION_INTERVAL_SECONDS = 4
 LOGGER = logging.getLogger(__name__)
 
 
@@ -119,6 +121,39 @@ class TelegramClient:
         for chunk in chunks:
             self.call("sendMessage", {"chat_id": chat_id, "text": chunk, "link_preview_options": {"is_disabled": True}})
 
+    def send_typing(self, chat_id: int) -> None:
+        self.call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
+
+
+class TypingIndicator:
+    """Refresh Telegram's ephemeral typing action while an invocation runs."""
+
+    def __init__(self, telegram: TelegramClient, chat_id: int, interval_seconds: int = TYPING_ACTION_INTERVAL_SECONDS) -> None:
+        self.telegram = telegram
+        self.chat_id = chat_id
+        self.interval_seconds = interval_seconds
+        self._stopped = Event()
+        self._thread = Thread(target=self._refresh, daemon=True)
+
+    def __enter__(self) -> "TypingIndicator":
+        self._send()
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        self._stopped.set()
+        self._thread.join(timeout=1)
+
+    def _refresh(self) -> None:
+        while not self._stopped.wait(self.interval_seconds):
+            self._send()
+
+    def _send(self) -> None:
+        try:
+            self.telegram.send_typing(self.chat_id)
+        except TelegramApiError:
+            LOGGER.debug("Telegram typing action failed")
+
 
 def main() -> int:
     args = parse_args()
@@ -182,7 +217,8 @@ def main() -> int:
                     LOGGER.debug("Telegram update ignored reason=unsupported_or_empty")
                     continue
                 LOGGER.debug("Telegram private text accepted")
-                reply = service.handle(ChannelMessage("telegram", tenant_id, str(message.user_id), str(message.chat_id), str(message.message_id), message.text))
+                with TypingIndicator(telegram, message.chat_id):
+                    reply = service.handle(ChannelMessage("telegram", tenant_id, str(message.user_id), str(message.chat_id), str(message.message_id), message.text))
                 if reply is not None:
                     telegram.send_text(message.chat_id, reply)
                 else:
