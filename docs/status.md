@@ -119,17 +119,23 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   and is bound in source. The 2026-08-03 Harness init/validate/plan passed;
   the operator then applied its two in-place updates: container environment and
   allow-list plus repository-scoped private-ECR pull permissions. Read-only
-  verification found Harness version 14 `READY`, the exact image digest, and
+  verification found Harness version 15 `READY`, the exact image digest, and
   built-in shell and file-operation tools. Session-storage attachment and live
   coding invocation remain unverified.
 - The unapplied VPC/NAT/EFS workspace plan and its Harness mock-output
   dependency were removed on 2026-08-03 to avoid idle home-lab network cost.
   Source now requests AgentCore-managed session storage at `/mnt/workspace`
   while retaining public network mode. It adds no EFS IAM permissions, VPC,
-  NAT, security groups, or customer-managed filesystem resources. Apply is not
-  authorized. Its init/validate and reviewed plan passed: one controlled
-  environment update, with no AWS resources created, changed, or destroyed.
-  Use the same `runtimeSessionId` to resume the workspace.
+  NAT, security groups, or customer-managed filesystem resources. The operator
+  applied its reviewed one-update plan; read-only verification found public
+  mode and session storage at `/mnt/workspace`. Use the same
+  `runtimeSessionId` to resume the workspace.
+- Native coding is not yet authorized to GitHub: the Harness execution role has
+  no Secrets Manager/private-key access and the image has no credential source
+  for `git` or `gh`. The Gateway broker still mints the App installation
+  tokens, but it does not make one available to the workspace. Define a
+  short-lived, repository-scoped credential bridge before attempting native
+  clone, push, or PR proof.
 - Kimi's `chat_completions` tool-call protocol incompatibility remains known.
   The pending Sonnet change uses native `converse_stream`; a restricted tool
   retry remains required after apply.
