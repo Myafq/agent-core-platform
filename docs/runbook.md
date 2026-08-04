@@ -23,8 +23,9 @@ python3 -m venv .venv
 .venv/bin/pip install -r clients/cli/requirements.txt
 .venv/bin/python -m unittest discover -s tests
 .venv/bin/python scripts/validate_spec.py agents/github-assistant/agent.yaml
+.venv/bin/python scripts/render_slack_manifest.py agents/github-assistant/agent.yaml >/tmp/github-assistant-slack-manifest.json
 .venv/bin/python scripts/validate_contracts.py
-python3 -m py_compile scripts/validate_spec.py clients/cli/chat.py clients/telegram/bot.py
+python3 -m py_compile scripts/validate_spec.py scripts/render_slack_manifest.py clients/cli/chat.py clients/telegram/bot.py clients/slack/bot.py clients/slack/reconciliation.py clients/slack/reconcile.py clients/slack/launcher.py
 python3 -m json.tool schemas/agent-v1alpha1.schema.json >/dev/null
 mise exec -- terraform fmt -check -recursive modules
 mise exec -- terragrunt hcl fmt --check
@@ -60,6 +61,8 @@ export AWS_REGION=us-east-1
 export GITHUB_APP_ID=operator-supplied
 export GITHUB_APP_INSTALLATION_ID=operator-supplied
 export GITHUB_APP_PRIVATE_KEY_SECRET_ARN=operator-supplied
+export SLACK_WORKSPACE_ID=operator-supplied
+export SLACK_APP_ID=provisioner-output
 ```
 
 Channel secrets:
@@ -70,8 +73,25 @@ export SLACK_BOT_TOKEN=operator-supplied
 export SLACK_APP_TOKEN=operator-supplied
 ```
 
+Slack provisioning parameter names:
+
+```shell
+export SLACK_PROVISIONER_PARAMETER=/agent-core/slack/provisioner/config
+export SLACK_AGENT_BINDING_PARAMETER=/agent-core/slack/agents/github-assistant/binding
+export SLACK_AGENT_CREDENTIALS_PARAMETER=/agent-core/slack/agents/github-assistant/credentials
+```
+
 Never commit or print these values. App and installation IDs are non-secret;
-tokens and private-key material are secrets.
+tokens, refresh tokens, client/signing secrets, and private-key material are
+secrets.
+
+The provisioner and credentials parameters are Standard-tier `SecureString`
+JSON values under 4 KB. The binding is a Standard-tier `String` with no secrets.
+Use `alias/aws/ssm` for the home-lab phase. Do not add the provisioner parameter
+to `mise.toml`; only the reconciler may decrypt it. For `SLACK-002`, an accepted
+merge to `main` is standing authorization for Slack manifest create/update and
+the exact writes to these three SSM paths. It is not authorization for any other
+AWS resource or Terraform action.
 
 ## GitHub App operator handoff
 
@@ -90,7 +110,10 @@ GITHUB_APP_PRIVATE_KEY_SECRET_KEY=agent.pem
 Operator verification record, kept outside source and without private content:
 
 1. App has Contents, Pull requests, and Issues read/write; no organization or account permissions;
-   webhooks are inactive.
+   webhooks are inactive. If permissions were just changed, GitHub requires the
+   installation owner to accept the updated permissions before any minted
+   installation token reflects them; an installation token request made before
+   acceptance fails safely (the broker returns `github_auth_failed`).
 2. Installation uses `Only select repositories`. Its repository list is the
    live read boundary for `listRepositories`, `getRepository`, and `getFile`.
 3. Numeric App ID and installation ID identify that App and installation.
@@ -106,72 +129,102 @@ permissions, user tokens, or key material in Terraform.
 
 ## Plan order
 
-The target units do not exist yet. Implement them under these owners:
+`platform/github-app-tool` and `agents/github-assistant` are both deployed.
+The Gateway, ECR repository, and broker Lambda (including `mintGitCredential`)
+already match source, and the Harness coding image `container_uri` is already
+pinned to the current credential-helper digest. No new image build and no
+platform (Gateway/Lambda) change is required for the remaining work below.
 
-```text
-platform/github-app-tool
-agents/github-assistant
-```
-
-Build the Harness coding image for `linux/arm64`, publish it to the private ECR
-repository, then plan the Harness-native workspace. The image must include Git,
-GitHub CLI, Python, Make, jq, and the project toolchain. The home-lab Harness
-uses AgentCore-managed session storage at `/mnt/workspace`; it stays in public
-network mode and creates no VPC, NAT, EFS, or dependency-mock infrastructure.
-Use the same `runtimeSessionId` to resume the workspace. Add EFS only after a
-shared durable workspace becomes necessary.
-
-Temporary home-lab direct-credential mode: the existing broker Lambda retains
-the App private key. The Harness can invoke that one function through its
-execution role, and the image helper mints a fresh selected-repository token
-for each `git`/`gh` authentication. No token is a Terraform input, Harness
-environment variable, or persistent file. This is intentionally not
-credential-isolated: a root-capable Harness agent can retrieve and exfiltrate
-the token. Do not use this mode for production.
-
-Build and publish the changed ARM64 image before planning the Harness:
+Harness v19 proved that control-plane environment variables were absent from
+fresh runtime shells. AgentCore also rejected `AWS_REGION` as reserved. The
+approved home-lab repair embeds overridable, non-secret defaults in the helper
+and clears the ineffective Harness environment map. The ARM64 image is pushed
+and pinned at
+`github-app-tool-coding@sha256:ecb32df1a3814a799dc9bfe98d9439341041492b693a7183b62d94da5a0d130a`.
+Plan only the Harness unit:
 
 ```shell
-scripts/build_harness_coding_image.sh \
-  803629127460.dkr.ecr.us-east-1.amazonaws.com/github-app-tool-coding \
-  <immutable-new-tag>
-```
-
-Update `container_uri` to the resulting immutable digest. Then plan all units
-from the environment root:
-
-```shell
-cd live/dev/us-east-1
-mise exec -- terragrunt run --all -- plan
+cd live/dev/us-east-1/agents/github-assistant
+mise exec -- terragrunt plan
 ```
 
 The Harness dependency shallow-merges real platform state with checked-in,
-non-secret broker-output mocks for `validate` and `plan`. This lets the graph
-plan before a new platform output exists in state. Mocks are not available to
-`apply`; it consumes real dependency state after the platform update.
+non-secret broker-output mocks for `validate` and `plan`; the real platform
+outputs already exist in state, so this is not exercising the mock path.
+Mocks are never available to `apply`.
 
-After explicit apply authorization and one `runtimeSessionId`, use one selected
-repository only. Keep the token out of shell output and Git configuration:
+Accept only that one in-place Harness image/environment update. Reject
+any Gateway/ECR/Lambda replacement, private-key values, broad IAM, OAuth/Token
+Vault resources, repository wildcards, arbitrary HTTP/Git execution, or host
+mounts — none of those are part of this change.
+
+Plans are safe. Apply requires its own explicit authorization immediately
+before use:
+
+```shell
+mise exec -- terragrunt apply
+```
+
+### External dependency: GitHub App write permissions (GHAPP-003)
+
+Before any mutation proof, an authorized operator verifies or updates the
+installed GitHub App against the "GitHub App operator handoff" checklist above
+(Contents, Pull requests, and Issues each `Read and write`) and, if changed,
+lets GitHub's installation owner accept the update. An ad hoc credential-helper
+check already showed the broker reaching GitHub and safely returning
+`github_auth_failed` while requesting exactly `contents: write`,
+`pull_requests: write`, `issues: write` — that isolates the remaining blocker
+to this external step, not to source or the deployed Lambda/Harness path. Do
+not compensate with broader App permissions, wildcard repositories, or a user
+token.
+
+### Controlled native proof (WRITE-001)
+
+The first native mutation proof succeeded on 2026-08-04 against
+`Myafq/dineza`: 5 files/85 tests passed, commit
+`2d8fb68f363dedd6cb55d3d4ca7b35558f65d4aa` was pushed, and PR #1 opened.
+It required per-session injection of the two non-secret region/broker values,
+so repeat a read-only token-mint check after the durable image/runtime repair.
+For any later proof, use one `runtimeSessionId` and one repository already selected
+for the App installation. Keep the token out of shell output and Git
+configuration on every command — the credential helper never writes it to a
+file or repository config:
 
 ```shell
 GH_TOKEN="$(github-app-token OWNER REPO)" gh repo view OWNER/REPO
+
 git -c credential.helper='!/usr/local/bin/github-app-git-credential' \
   -c credential.useHttpPath=true clone https://github.com/OWNER/REPO.git
+cd REPO
+
+# edit: make the requested change
+
+# test: run the target repository's own test command, e.g. `make test`
+
+git checkout -b <branch>
+git add <changed paths>
+git commit -m "<message>"
+git -c credential.helper='!/usr/local/bin/github-app-git-credential' \
+  -c credential.useHttpPath=true push -u origin <branch>
+
+GH_TOKEN="$(github-app-token OWNER REPO)" gh pr create \
+  --repo OWNER/REPO --base <default-branch> --head <branch> \
+  --title "<title>" --body "<body>"
 ```
 
-Record only redacted request IDs, commit SHA, test outcome, and PR URL. Replace
-this mode with a credential-isolated MCP/service worker before production use.
+`OWNER/REPO` must already be selected for this App installation; the broker
+narrows every minted token to the requested repository regardless of what the
+agent asks for, so an out-of-scope repository fails at token minting, not at
+the Git/GitHub call. Record only redacted request IDs, commit SHA, test
+outcome, and PR URL — never the token, its value, or raw command output that
+contains it.
 
-Accept only the scoped Gateway/Lambda update; model/Harness changes; private-ECR
-image pull permission; one Lambda invocation permission; explicit built-in
-shell/file allow-list; public-mode session storage at the exact mount path; and
-no VPC/NAT/EFS resources. Reject private-key values, broad IAM, OAuth/Token
-Vault resources, repository wildcards, arbitrary HTTP/Git execution, or host
-mounts.
-
-Plans are safe. Apply requires explicit authorization immediately before use.
-After review, use `mise exec -- terragrunt run --all -- apply`; mocks remain
-disabled during apply.
+This proof exercises native `git`/`gh` through the temporary direct-credential
+helper, not the Gateway/Lambda REST tools. Do not retire the Gateway slice
+(`platform/github-app-tool`'s Gateway targets and the Harness `github-read`
+tool) until this native proof succeeds; it remains the fallback bounded
+read/write path until then. Replace this direct-credential mode with a
+credential-isolated MCP/service worker before any production use.
 
 ## Channel smoke tests
 
@@ -193,11 +246,133 @@ or chat ID. Private chats and this configured user only. The adapter checks that
 no webhook is configured before it starts long polling; it does not remove a
 webhook. Use long polling, not a webhook.
 
-Slack command will be added by SLACK-001. It must use Socket Mode with bot and
-app tokens, direct messages, one workspace, and configured users only.
+Slack:
 
-Run chat-only smoke tests before attaching GitHub. Record UTC time and redacted
-request IDs. Do not log raw events or tokens.
+```shell
+export SLACK_BOT_TOKEN=operator-supplied
+export SLACK_APP_TOKEN=operator-supplied
+export SLACK_APP_ID=A01234567
+export SLACK_WORKSPACE_ID=T01234567
+
+.venv/bin/python clients/slack/bot.py \
+  --region "$AWS_REGION" \
+  --profile "$AWS_PROFILE" \
+  --app-id "$SLACK_APP_ID" \
+  --workspace-id "$SLACK_WORKSPACE_ID" \
+  --harness-arn "$(cd live/dev/us-east-1/agents/github-assistant && mise exec -- terragrunt output -raw harness_arn)"
+```
+
+Render the Slack app manifest from the agent declaration:
+
+```shell
+.venv/bin/python scripts/render_slack_manifest.py \
+  agents/github-assistant/agent.yaml > /tmp/github-assistant-slack-manifest.json
+```
+
+The manifest requests `app_mentions:read`, `channels:history`, `chat:write`,
+`groups:history`, and `im:history`; subscribes to `app_mention`,
+`message.channels`, `message.groups`, and `message.im`; and enables Socket Mode.
+History events are required only so replies in an agent-owned channel thread do
+not need to repeat the mention. The adapter ignores unthreaded channel messages
+and threads that were not opened by mentioning the bot. It stores registered
+channel/thread roots as workspace/App-partitioned hashes in `.slack-threads` and
+stores no message content.
+
+## Slack-002 operator sequence
+
+Scope: one existing macOS host, one Slack workspace, and manually launched
+per-agent Socket Mode processes. `SLACK-003` is deferred; do not introduce an
+HTTPS Events ingress in this sequence.
+
+1. **Bootstrap, once:** an authorized workspace owner supplies one configuration
+   token plus refresh token for `/agent-core/slack/provisioner/config`. The
+   reconciler alone decrypts it. This is not an adapter credential.
+2. **Merge reconciliation:** after an agent change is accepted on `main`, the
+   standing authorization covers only `apps.manifest.create`/update and writes
+   to the exact provisioner, binding, and credentials SSM paths. Validate and
+   render the manifest, then create once or update the Slack App ID in the
+   binding. `metadata.name` is immutable after binding creation; its path and
+   workspace are the identity. `spec.interfaces.slack.name` is mutable display
+   intent and must never be used to look up an app.
+3. **External approval:** each newly created Slack app still requires a human
+   workspace installation approval. Record the App ID, workspace ID, installer,
+   manifest digest, and UTC time—never tokens. After approval, exchange the
+   code and write only the app-specific bot token to that agent credentials
+   parameter.
+4. **External app token:** a human creates one per-app `connections:write`
+   token for Socket Mode. Store it only in that agent credentials parameter.
+   Neither a merge nor the provisioner token approves installation or creates
+   this token.
+5. **Manual process start:** the macOS operator invokes the selected agent
+   launcher, which replaces itself with the adapter. Load its binding and
+   credentials only into the process environment; do not load the provisioner value. The bot token must
+   authenticate to the exact `SLACK_WORKSPACE_ID`; every event must carry the
+   exact non-secret `SLACK_APP_ID`.
+6. **User validation and live invocation:** only after the preceding external
+   approvals and manual process start, obtain explicit authorization to run the
+   chat-only DM/mention proof. Record UTC time and redacted request IDs; do not
+   log raw events, messages, identities, or tokens. This is neither Terraform
+   plan/apply evidence nor GitHub-tool proof.
+
+If a binding is absent after an app may have been created, stop. Resume only
+with explicit adoption of the exact Slack App ID in the same workspace; never
+search by display name or create a replacement. A failed reconciliation leaves
+the previous binding, credentials, external Slack state, and running processes
+unchanged. Removing an agent from source never deletes, disables, revokes, or
+stops external state; record it for separate operator review.
+
+Terraform plan and apply are outside Slack reconciliation. A plan remains
+separate evidence; apply needs its own immediate explicit authorization.
+
+Plan merged agent intent without Slack mutation or SSM writes:
+
+```shell
+.venv/bin/python clients/slack/reconcile.py plan \
+  --spec agents/github-assistant/agent.yaml \
+  --workspace-id "$SLACK_WORKSPACE_ID" \
+  --region "$AWS_REGION" \
+  --profile "$AWS_PROFILE"
+```
+
+After merge to `main`, the standing Slack/SSM authorization permits replacing
+`plan` with `apply`. A `noop` performs no token rotation, Slack call, or SSM
+write. If exact-ID adoption is required, review the workspace and App ID first,
+then add `--adopt-app-id "$SLACK_APP_ID"`.
+
+Keep approval codes and app tokens out of command arguments and shell history.
+Read them silently into temporary environment variables:
+
+```shell
+read -s SLACK_OAUTH_CODE
+export SLACK_OAUTH_CODE
+.venv/bin/python clients/slack/reconcile.py complete-oauth \
+  --spec agents/github-assistant/agent.yaml \
+  --workspace-id "$SLACK_WORKSPACE_ID" \
+  --region "$AWS_REGION" \
+  --profile "$AWS_PROFILE" \
+  --oauth-code-env SLACK_OAUTH_CODE
+unset SLACK_OAUTH_CODE
+
+read -s SLACK_SOCKET_APP_TOKEN
+export SLACK_SOCKET_APP_TOKEN
+.venv/bin/python clients/slack/reconcile.py set-app-token \
+  --spec agents/github-assistant/agent.yaml \
+  --workspace-id "$SLACK_WORKSPACE_ID" \
+  --region "$AWS_REGION" \
+  --profile "$AWS_PROFILE" \
+  --app-token-env SLACK_SOCKET_APP_TOKEN
+unset SLACK_SOCKET_APP_TOKEN
+```
+
+Start one fully provisioned adapter manually from the local `main` ref:
+
+```shell
+.venv/bin/python clients/slack/launcher.py \
+  --agent github-assistant \
+  --region "$AWS_REGION" \
+  --profile "$AWS_PROFILE" \
+  --harness-arn "$(cd live/dev/us-east-1/agents/github-assistant && mise exec -- terragrunt output -raw harness_arn)"
+```
 
 ## GitHub smoke tests
 

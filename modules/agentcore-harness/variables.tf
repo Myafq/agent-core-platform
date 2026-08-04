@@ -73,13 +73,6 @@ variable "github_credential_broker_function_arn" {
   nullable    = true
 }
 
-variable "github_credential_broker_function_name" {
-  description = "Non-secret broker Lambda name passed to the Harness credential helper."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
 variable "container_uri" {
   description = "Optional immutable ARM64 ECR image for the Harness execution environment."
   type        = string

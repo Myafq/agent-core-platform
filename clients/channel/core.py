@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import logging
+from threading import Lock
 from typing import Any, Callable
 import uuid
 
@@ -47,29 +48,33 @@ class ChannelService:
     allowed_users: set[str] = field(default_factory=set)
     _sessions: dict[str, str] = field(default_factory=dict, init=False)
     _seen_messages: set[tuple[str, str, str]] = field(default_factory=set, init=False)
+    _state_lock: Lock = field(default_factory=Lock, init=False, repr=False)
 
     def handle(self, message: ChannelMessage) -> str | None:
         payload = message.as_dict()
         validate_channel_message(payload)
-        if self.allowed_users and runtime_user_id(payload) not in self.allowed_users:
-            LOGGER.info("Rejected channel message channel=%s tenant=%s", message.channel, message.tenant_id)
-            return None
+        with self._state_lock:
+            if self.allowed_users and runtime_user_id(payload) not in self.allowed_users:
+                LOGGER.info("Rejected channel message channel=%s tenant=%s", message.channel, message.tenant_id)
+                return None
 
-        dedupe_key = (message.channel, message.tenant_id, message.message_id)
-        if dedupe_key in self._seen_messages:
-            LOGGER.info("Ignored duplicate channel message channel=%s tenant=%s", message.channel, message.tenant_id)
-            return None
-        self._seen_messages.add(dedupe_key)
+            dedupe_key = (message.channel, message.tenant_id, message.message_id)
+            if dedupe_key in self._seen_messages:
+                LOGGER.info("Ignored duplicate channel message channel=%s tenant=%s", message.channel, message.tenant_id)
+                return None
+            self._seen_messages.add(dedupe_key)
 
         command = _command_name(message.text)
         if command in {"/start", "/help"}:
             return HELP_TEXT
         key = session_id(payload)
         if command == "/new":
-            self._sessions[key] = f"session-{uuid.uuid4().hex}"
+            with self._state_lock:
+                self._sessions[key] = f"session-{uuid.uuid4().hex}"
             return NEW_SESSION_TEXT
 
-        active_session = self._sessions.setdefault(key, key)
+        with self._state_lock:
+            active_session = self._sessions.setdefault(key, key)
         try:
             response = self.invoke(active_session, runtime_user_id(payload), message.text)
         except (HarnessStreamError, RuntimeError, ContractError) as error:

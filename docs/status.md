@@ -1,6 +1,6 @@
 # Current status
 
-Last updated: 2026-08-03
+Last updated: 2026-08-04
 
 ## Design decision
 
@@ -134,37 +134,75 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   appears to work; redacted same-session persistence evidence is not recorded.
 - Temporary direct credential source is implemented in source. The Lambda
   package is built locally and the ARM64 credential-helper image is published
-  at `github-app-tool-coding@sha256:54450f0aeb93ae43d92f184802fbe12c271e7254eb5c73ae438b62a734b11686`, then pinned in source. The
-  existing broker Lambda retains the App private key and mints a fresh
-  selected-repository token when the Harness credential helper invokes it with
-  its scoped `lambda:InvokeFunction` role permission. The token is not in
-  Terraform, Harness configuration, or a persisted file, but is deliberately
-  reachable by the root-capable Harness and may be exfiltrated for its one-hour
-  lifetime. `terragrunt run --all -- plan` passed and was applied: platform was
-  exactly one in-place Lambda code update, with no Gateway/ECR/resource
-  replacement; Harness added one post-create environment update and changed
-  IAM/Harness configuration in place. Read-only verification found Lambda
-  `Active` with `Successful` update status; Harness v17 `READY`, the exact
-  credential-helper image digest, only
+  at `github-app-tool-coding@sha256:54450f0aeb93ae43d92f184802fbe12c271e7254eb5c73ae438b62a734b11686`, then pinned in source as `container_uri`; no
+  new image build is pending. The existing broker Lambda retains the App
+  private key and mints a fresh selected-repository token when the Harness
+  credential helper invokes it with its scoped `lambda:InvokeFunction` role
+  permission. The token is not in Terraform, Harness configuration, or a
+  persisted file, but is deliberately reachable by the root-capable Harness and
+  may be exfiltrated for its one-hour lifetime. A prior `terragrunt run --all
+  -- plan`/apply cycle was exactly one platform in-place Lambda code update,
+  with no Gateway/ECR/resource replacement, plus one Harness post-create
+  environment update and in-place IAM/Harness configuration change. Read-only
+  verification found Lambda `Active` with `Successful` update status; Harness
+  v17 `READY`, the exact credential-helper image digest, only
   `GITHUB_APP_TOKEN_BROKER_FUNCTION_NAME=github-app-tool`, and one scoped
   `lambda:InvokeFunction` permission. Harness dependency mocks shallow-merge
   only new non-secret broker outputs for `validate`/`plan`. No live token mint,
-  clone, commit, push, PR, or channel test has run. Exact helper instructions
-  for `gh`, clone, and Git network commands are in source. The corrected
-  graph-wide plan has no platform changes; it updates Harness in place and
-  deletes only the obsolete Terraform bookkeeping object while retaining the
-  provider-owned non-secret broker function name. It is not yet applied. Live
-  agent diagnostics found no shell region; source now injects the non-secret
-  deployment region and helper explicitly selects it, requiring a new image and
-  Harness update. Once an operator-set region allowed invocation, the broker
-  safely reported `github_auth_failed` at token minting; verify installed App
-  write permissions before retrying.
+  clone, commit, push, PR, or channel test has run through the deployed path.
+  Exact helper instructions for `gh`, clone, and Git network commands are in
+  source. Harness v19 then proved control-plane environment variables were not
+  present in fresh runtime shells; AgentCore also rejected `AWS_REGION` as a
+  reserved key before mutation. The approved repair puts overridable,
+  non-secret `us-east-1` and `github-app-tool` defaults in the helper, clears
+  the ineffective Harness environment map, and pins image
+  `github-app-tool-coding@sha256:ecb32df1a3814a799dc9bfe98d9439341041492b693a7183b62d94da5a0d130a`.
+  The Harness-only plan/apply was 0 added, 1 changed, 0 destroyed. Harness v20
+  reached `READY` with zero configured environment variables. In a brand-new
+  session, with all three override variables explicitly unset, the helper
+  minted a `Myafq/dineza` repository-scoped token successfully and discarded
+  its value; the diagnostic session was then stopped.
+- `WRITE-001` live native proof succeeded on 2026-08-04 in one Harness session
+  after injecting only the two non-secret region/broker values into that
+  session. Against selected repository `Myafq/dineza`, the agent cloned with
+  the credential helper, added six missing `formatHour` tests, ran the Node 24
+  suite successfully (5 files, 85 tests), committed
+  `2d8fb68f363dedd6cb55d3d4ca7b35558f65d4aa`, pushed branch
+  `codex/write-001-native-proof-20260804`, and opened PR #1. Read-only follow-up
+  found the PR open against `main` and the workspace clean. No token value was
+  emitted or persisted. This proves the App permissions, broker, native
+  Git/gh path, push, and PR creation. The later v20 fresh-session check proves
+  zero-touch helper initialization.
 - Kimi's `chat_completions` tool-call protocol incompatibility is historical;
   the active Harness uses Sonnet with `converse_stream`.
 
 ## Not verified
 
-- No Slack adapter exists.
+- `SLACK-001` is complete offline. `spec.interfaces.slack.name` declares one
+  Slack App and bot identity per agent. Every workspace user may start a session
+  by DM or by mentioning an invited bot. Every root produces a Slack thread and
+  one Harness session. Public/private channel follow-ups are accepted only for
+  registered mention roots; roots persist locally as hashes with no content or
+  user IDs. The manifest contains the required mention, channel-history,
+  private-channel-history, DM-history, and write scopes. The adapter checks the
+  workspace and provisioned Slack App ID, acknowledges before Harness work,
+  deduplicates retries, rejects bot loops/unregistered threads, and sends
+  bounded plain-text threaded replies with unfurls disabled. No Slack app,
+  installation, token, Socket Mode connection, or live invocation was created
+  or exercised.
+- `SLACK-002` is implemented but not user-validated. Its scope is one existing macOS
+  host and one Slack workspace: `main` merge is standing authorization for
+  Slack manifest create/update and exact Slack SSM writes, while human install
+  approval and one per-app `connections:write` token remain external steps.
+  Controller and adapter processes remain manual. `metadata.name` is immutable,
+  `slack.name` is mutable display intent, binding loss requires explicit exact
+  App-ID adoption, removals preserve external state, and failures preserve the
+  current process. Source now contains an idempotent reconciliation CLI, fake
+  client tests, and a manual selected-agent launcher that reads merged `main`
+  intent and decrypts only that agent's credentials. No tests or validators
+  were run for this implementation. No parameter write, Slack app change,
+  plan/apply, installation, Socket Mode connection, user validation, or live
+  invocation was performed.
 - A direct IAM Harness-to-Gateway request listed selected repositories. No
   Telegram/Slack-to-GitHub invocation or live GitHub mutation has succeeded.
 - The current Harness plan and apply evidence is recorded above. No new plan
@@ -188,23 +226,25 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   in-place updates; post-apply `get-harness` reported `READY`, version 3, no
   tools/skills, `allowedTools: ["@disabled"]`, and the chat-only prompt. The
   follow-up plan was no-change.
-- The active IAM Harness is version 15 and `READY`; it has one IAM GitHub
+- The active IAM Harness is version 20 and `READY`; it has one IAM GitHub
   Gateway tool and all eight deployed operations. A direct IAM
   Harness-to-Gateway repository-list invocation succeeded.
 - The deployed Harness has the custom container, built-in shell/file allow-list,
   and public-mode AgentCore-managed session storage at `/mnt/workspace`; it has
   no VPC or EFS mount.
 - No Telegram/Slack-to-GitHub invocation or live mutation has succeeded.
-- The installed GitHub App is not yet verified with `Contents: Read and write`,
-  `Pull requests: Read and write`, and `Issues: Read and write`; the new write
-  tools cannot succeed until that external configuration and deployment exist.
+- The installed GitHub App write permissions and selected-repository mutation
+  path are verified by the successful native proof above.
 - No cloud, GitHub, Slack, or Telegram settings were changed during this review.
 
 ## Blockers
 
-- GitHub App write permissions must be verified or updated outside this
-  environment before the deployed mutation tools can succeed.
-- Slack app manifest/install values and tokens are not yet supplied.
+- Slack configuration access/refresh tokens are not supplied. `SLACK-002`
+  cannot reconcile until the one-workspace bootstrap exists. Each new app still
+  needs human installation approval and a human-created per-app
+  `connections:write` token before its manually started Socket Mode process can
+  connect. No parameters, Slack settings, reconciliation apply, or live
+  invocation was performed.
 - The scoped GitHub platform and Harness plans applied. No GitHub App settings
   changed from this environment.
 - User-delegated GitHub remains blocked on a fixed and isolated Harness 3LO path
@@ -212,7 +252,14 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
 
 ## Next
 
-Next: build/package, plan, and—only after immediate explicit authorization—apply
-the broker and Harness changes. Then run one redacted selected-repository
-clone/edit/test/commit/push/PR proof with one `runtimeSessionId`. Replace direct
-token delivery with credential-isolated MCP/service work before production use.
+Next for the user-prioritized Slack slice: the operator runs the focused and
+full offline validation in `docs/runbook.md`. If it passes, bootstrap the Slack
+configuration token pair in SSM, review a reconciliation `plan`, and use the
+standing `main` merge authorization for the first `apply`. Installation,
+per-app `connections:write` token creation, manual adapter launch, and live
+Harness invocation remain separate human actions/approvals.
+
+Next for the GitHub/Harness slice: review PR #1 and separately decide whether to
+retire the now-proven Gateway fallback. No PR merge, Gateway retirement, or
+resource deletion is authorized. Replace direct token delivery with
+credential-isolated MCP/service work before production use.
