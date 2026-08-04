@@ -116,9 +116,7 @@ class AgentCoreHarnessChatOnlyTests(unittest.TestCase):
     def test_temporary_git_credential_is_brokered_not_configured(self) -> None:
         self.assertIn('sid       = "MintTemporaryGitHubCredential"', self.main)
         self.assertIn('actions   = ["lambda:InvokeFunction"]', self.main)
-        self.assertIn("GITHUB_APP_TOKEN_BROKER_FUNCTION_NAME", self.main)
-        self.assertIn("AWS_REGION", self.main)
-        self.assertIn("environment_variables = var.github_credential_broker_function_name", self.main)
+        self.assertIn("environment_variables = {}", self.main)
         self.assertNotIn('resource "terraform_data" "credential_broker_environment"', self.main)
         self.assertNotIn("GITHUB_TOKEN", self.main)
         self.assertIn("github-app-token", (self.coding_image / "Dockerfile").read_text(encoding="utf-8"))
@@ -127,6 +125,8 @@ class AgentCoreHarnessChatOnlyTests(unittest.TestCase):
         self.assertIn('"operation": "mintGitCredential"', token_helper)
         self.assertIn("GITHUB_APP_TOKEN_BROKER_FUNCTION_NAME", token_helper)
         self.assertIn('os.environ.get("AWS_REGION")', token_helper)
+        self.assertIn('DEFAULT_FUNCTION_NAME = "github-app-tool"', token_helper)
+        self.assertIn('DEFAULT_REGION = "us-east-1"', token_helper)
         self.assertIn("github-app-token", credential_helper)
         self.assertNotIn("GITHUB_APP_PRIVATE_KEY", token_helper)
 

@@ -16,6 +16,28 @@ Telegram or Slack
 Harness remains the managed agent loop. GitHub initially uses the agent's
 installation identity, not a user's OAuth identity.
 
+Portable interface intent belongs in the agent spec:
+
+```yaml
+spec:
+  interfaces:
+    slack:
+      name: GitHub Assistant
+```
+
+The platform renders one Slack manifest per agent. Workspace/App IDs and secret
+token references remain environment configuration; every workspace user may
+start a thread by DM or by mentioning an invited bot.
+
+Slack provisioning and per-agent credentials use path-scoped, Standard-tier SSM
+parameters; secret values never enter agent YAML or Terraform state.
+
+For the local `SLACK-002` phase, `main` merge authorizes only Slack manifest
+create/update and exact Slack SSM writes. Human installation approval and one
+per-app Socket Mode `connections:write` token remain required; each macOS
+adapter is launched manually. Shared HTTPS Events ingress is deferred to
+`SLACK-003`.
+
 ## Layout
 
 ```text

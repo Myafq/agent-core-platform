@@ -62,7 +62,7 @@ flowchart LR
 | Boundary | Authentication | Authorization |
 |---|---|---|
 | Telegram to adapter | Telegram Bot API over the bot-authenticated `getUpdates` channel | private chats and configured Telegram user allow-list |
-| Slack to adapter | pre-authenticated Socket Mode WebSocket | configured workspace plus user/channel allow-list; direct messages first |
+| Slack to adapter | pre-authenticated Socket Mode WebSocket | one configured workspace; every workspace user; DMs and threads opened by mentioning an invited bot |
 | Adapter to Harness | one narrowly scoped AWS IAM role using SigV4 | `InvokeHarness` on one Harness; `InvokeHarnessForUser` only if required by the final SDK/API shape |
 | Harness to Gateway | Harness execution role | `InvokeGateway` on one Gateway and exact `allowedTools` |
 | Gateway to Lambda | Gateway service role | `lambda:InvokeFunction` on one qualified function ARN |
@@ -84,8 +84,21 @@ feature is designed.
 ### Agent contract
 
 `agents/<name>/agent.yaml` owns portable intent: model, prompt, limits, tags,
-and normalized capability names. It does not contain provider ARNs, account
-IDs, installation IDs, channel tokens, private keys, callback URLs, or IAM.
+normalized capability names, and requested interfaces. A Slack interface is
+declared with display intent only:
+
+```yaml
+spec:
+  interfaces:
+    slack:
+      name: GitHub Assistant
+```
+
+The platform compiles this into the reviewed Slack app manifest. The environment
+binding owns the Slack workspace and App IDs, app and bot token references,
+Harness ARN, IAM role, and adapter deployment. The agent YAML does not contain
+provider ARNs, account IDs, installation IDs, channel tokens, private keys,
+callback URLs, or IAM.
 
 The compiler boundary must emit a normalized object before Terraform modules
 consume it. Raw YAML field naming must not leak into modules.
@@ -118,9 +131,95 @@ The shared service owns:
 Adapters own only transport parsing, acknowledgement, and response delivery.
 
 Telegram remains private-chat long polling for development. Slack starts with
-Socket Mode because it needs no public request URL. Direct messages are the
-first Slack surface; mentions or shared channels are additive after privacy and
-threading tests.
+Socket Mode because it needs no public request URL. Every Slack app represents
+exactly one agent. Every workspace user may open a session with a top-level DM
+or by mentioning an invited bot. The adapter replies in a thread, and the Slack
+channel plus root timestamp identify one Harness session. Channel follow-ups do
+not require another mention, so Slack must deliver `message.channels` and
+`message.groups`; the adapter ignores every message outside a root previously
+opened by `app_mention`. It persists only hashes of registered channel/thread
+IDs partitioned by workspace and Slack App ID, never message content or user
+IDs. Users invite bots to public or private channels; the platform requests no
+channel-management permission.
+
+### Slack provisioning and GitOps
+
+`SLACK-002` covers reconciliation and the local macOS operator contract only.
+`SLACK-003` remains deferred: no shared HTTPS Events ingress is part of this
+slice. The existing macOS host uses one manually invoked launcher per selected
+agent; the launcher replaces itself with that Socket Mode process.
+Reconciliation never starts, stops, or restarts adapter processes.
+
+App creation and update use Slack App Manifest APIs. A one-time bootstrap owns
+one workspace configuration token and its refresh token in SSM Parameter Store;
+the access token expires after 12 hours and must be rotated with
+`tooling.tokens.rotate`. The token belongs to one Slack user in one workspace,
+not one app, and can manage all apps that user owns in that workspace.
+
+Use Standard-tier parameters and keep every JSON value below 4 KB:
+
+| Parameter | Type | Contents |
+|---|---|---|
+| `/agent-core/slack/provisioner/config` | `SecureString` | Configuration access token and refresh token only. Updated together after every rotation. |
+| `/agent-core/slack/agents/<metadata.name>/binding` | `String` | Workspace ID, Slack App ID, manifest digest, installation state, and last successful reconcile time. No secret values. |
+| `/agent-core/slack/agents/<metadata.name>/credentials` | `SecureString` | Client secret, signing secret, bot token, and local-phase app token. Missing values remain absent, never empty placeholders. |
+
+Use the default `alias/aws/ssm` key for the cost-lean home-lab phase. IAM is the
+decryption boundary: the reconciler may read/write the provisioner path and all
+Slack agent paths; each adapter launcher may decrypt only its one credentials
+parameter and read its one binding. Do not load the provisioner parameter into
+the repository-wide mise environment. Fetch it only inside the reconciler and
+keep decrypted values in process memory.
+
+`metadata.name` is immutable once its binding exists. It is the SSM path and
+reconciliation identity. `spec.interfaces.slack.name` is mutable display intent
+and updates the recorded app manifest; it never selects an app. A merge to
+`main` is standing authorization only for Slack manifest create/update and the
+exact SSM writes above. It does not authorize a Slack installation approval,
+creation of an app-level token, controller/adapter process actions, Terraform
+apply, or a live Harness invocation.
+
+For a new agent spec merged to `main`, the reconciler:
+
+1. validates the YAML and renders the exact Slack manifest;
+2. creates the app with `apps.manifest.create`, or updates its recorded App ID;
+3. stores the returned client secret and signing secret in the agent's SSM
+   `SecureString` parameter;
+4. emits the returned Slack installation URL as an approval action;
+5. waits for a human workspace installation approval, then exchanges the OAuth
+   code and stores the app-specific bot token;
+6. waits for one human-created, app-specific `connections:write` token and
+   writes it to the same `SecureString`.
+
+The adapter launcher remains a manual macOS operator action. It loads only the
+named agent binding and credentials into ephemeral child-process environment
+values; it does not receive the provisioner parameter.
+
+The reconcile key is workspace ID plus `metadata.name`, not the mutable Slack
+display name. The SSM binding records the returned Slack App ID, manifest digest,
+and installation state. Reconciliation must update that App ID and must never
+call create again merely because a run was retried. If app creation succeeds but
+binding persistence does not, stop. A later run may proceed only after explicit
+adoption supplies that exact Slack App ID for the same workspace; it must not
+guess by display name, search for a likely app, or create a duplicate.
+
+Removing an agent from source never deletes, disables, revokes, or otherwise
+changes its Slack app, installation, SSM parameters, or running process. It
+records an operator-review item only. Any failed reconciliation preserves the
+previous binding and credentials and does not act on currently running adapter
+processes. Because Slack and SSM cannot commit atomically, failures after a
+successful external mutation require operator inspection before retry.
+
+The configuration token cannot approve installation. Slack's documented Socket
+Mode setup still treats creation of the app-level token as an app-specific step,
+so separate Socket Mode apps are mostly automated, not unattended. The approval
+record owns the Slack App ID, workspace ID, installer, manifest digest, and UTC
+time; it never records token values.
+
+`SLACK-003`, if later authorized, may replace Socket Mode with one shared HTTPS
+Events ingress. Each agent would retain a separate Slack App and bot identity,
+but the scope, migration, and validation are intentionally not part of
+`SLACK-002`.
 
 ### Harness
 
@@ -143,7 +242,9 @@ This home-lab deployment temporarily accepts direct credential exposure to make
 native `git` and `gh` usable. The existing broker Lambda remains the only
 component with `secretsmanager:GetSecretValue` for the App private key. The
 Harness execution role can invoke only that Lambda. A helper in the custom
-image requests a fresh, one-repository installation token; the token is passed
+image defaults its non-secret region and broker name to `us-east-1` and
+`github-app-tool`, while allowing environment overrides. It requests a fresh,
+one-repository installation token; the token is passed
 only to the immediate `git`/`gh` process and never becomes a Terraform value,
 Harness environment variable, or persisted credential file.
 

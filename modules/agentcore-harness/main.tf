@@ -244,14 +244,11 @@ resource "aws_bedrockagentcore_harness" "this" {
     text = var.system_prompt
   }
 
-  max_iterations  = var.max_iterations
-  max_tokens      = var.max_tokens
-  timeout_seconds = var.timeout_seconds
-  tags            = local.common_tags
-  environment_variables = var.github_credential_broker_function_name == null ? {} : {
-    GITHUB_APP_TOKEN_BROKER_FUNCTION_NAME = var.github_credential_broker_function_name
-    AWS_REGION                            = data.aws_region.current.region
-  }
+  max_iterations        = var.max_iterations
+  max_tokens            = var.max_tokens
+  timeout_seconds       = var.timeout_seconds
+  tags                  = local.common_tags
+  environment_variables = {}
 
   depends_on = [aws_iam_role_policy.execution]
 

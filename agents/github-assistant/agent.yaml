@@ -21,6 +21,10 @@ spec:
     system:
       file: prompts/system.md
 
+  interfaces:
+    slack:
+      name: GitHub Assistant
+
   limits:
     maxIterations: 8
     maxTokens: 2048

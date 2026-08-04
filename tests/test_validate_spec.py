@@ -67,6 +67,14 @@ class ValidateSpecTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("greater than the maximum of 2", result.stderr)
 
+    def test_rejects_slack_names_longer_than_the_manifest_limit(self) -> None:
+        self.spec["spec"]["interfaces"]["slack"]["name"] = "x" * 36
+
+        result = self.validate(self.write_spec())
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("is too long", result.stderr)
+
     def test_rejects_unsupported_engine_and_provider(self) -> None:
         self.spec["spec"]["engine"]["type"] = "runtime"
         self.spec["spec"]["model"]["provider"] = "openai"
