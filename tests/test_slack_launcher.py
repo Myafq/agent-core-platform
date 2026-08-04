@@ -70,9 +70,12 @@ def values(manifest_digest: str, *, state: str = "socket_mode_ready", bot_token:
     }
 
 
+REDIRECT_URI = "https://callback.example/slack/oauth/callback"
+
+
 class SlackLauncherTests(unittest.TestCase):
     def source(self) -> AgentSource:
-        return discover_slack_agents(FakeReader({"agents/github-assistant/agent.yaml": SPEC}))["github-assistant"]
+        return discover_slack_agents(FakeReader({"agents/github-assistant/agent.yaml": SPEC}), REDIRECT_URI)["github-assistant"]
 
     def test_discovers_only_slack_agents_from_main_content(self) -> None:
         reader = FakeReader(
@@ -81,7 +84,7 @@ class SlackLauncherTests(unittest.TestCase):
                 "agents/no-slack/agent.yaml": SPEC.replace("  interfaces:\n    slack:\n      name: GitHub Assistant\n", ""),
             }
         )
-        agents = discover_slack_agents(reader)
+        agents = discover_slack_agents(reader, REDIRECT_URI)
         self.assertEqual(set(agents), {"github-assistant"})
 
     def test_binding_must_match_rendered_manifest_and_decrypts_only_agent_credentials(self) -> None:

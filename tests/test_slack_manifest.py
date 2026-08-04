@@ -15,12 +15,15 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 SAMPLE_SPEC = REPOSITORY_ROOT / "agents" / "github-assistant" / "agent.yaml"
 
 
+REDIRECT_URI = "https://callback.example/slack/oauth/callback"
+
+
 class SlackManifestTests(unittest.TestCase):
     def setUp(self) -> None:
         self.spec = yaml.safe_load(SAMPLE_SPEC.read_text(encoding="utf-8"))
 
     def test_renders_minimal_direct_message_socket_mode_manifest(self) -> None:
-        manifest = slack_manifest(self.spec)
+        manifest = slack_manifest(self.spec, REDIRECT_URI)
         self.assertEqual(manifest["display_information"]["name"], "GitHub Assistant")
         self.assertEqual(manifest["features"]["bot_user"]["display_name"], "github-assistant")
         self.assertEqual(
@@ -29,7 +32,7 @@ class SlackManifestTests(unittest.TestCase):
         )
         self.assertEqual(
             manifest["oauth_config"]["redirect_urls"],
-            ["https://localhost/slack/oauth/callback"],
+            [REDIRECT_URI],
         )
         self.assertEqual(
             manifest["settings"]["event_subscriptions"]["bot_events"],
@@ -42,7 +45,11 @@ class SlackManifestTests(unittest.TestCase):
         spec = copy.deepcopy(self.spec)
         del spec["spec"]["interfaces"]["slack"]
         with self.assertRaisesRegex(ValueError, "spec.interfaces.slack.name"):
-            slack_manifest(spec)
+            slack_manifest(spec, REDIRECT_URI)
+
+    def test_requires_an_https_redirect_uri(self) -> None:
+        with self.assertRaisesRegex(ValueError, "redirect_uri"):
+            slack_manifest(self.spec, "http://callback.example/slack/oauth/callback")
 
 
 if __name__ == "__main__":

@@ -16,13 +16,15 @@ except ModuleNotFoundError:
     raise SystemExit(2) from None
 
 
-def slack_manifest(spec: dict[str, Any]) -> dict[str, Any]:
+def slack_manifest(spec: dict[str, Any], redirect_uri: str) -> dict[str, Any]:
     slack = spec.get("spec", {}).get("interfaces", {}).get("slack")
     if not isinstance(slack, dict) or not isinstance(slack.get("name"), str):
         raise ValueError("spec.interfaces.slack.name is required")
     agent_name = spec.get("metadata", {}).get("name")
     if not isinstance(agent_name, str):
         raise ValueError("metadata.name is required")
+    if not isinstance(redirect_uri, str) or not redirect_uri.startswith("https://"):
+        raise ValueError("redirect_uri must be an https:// URL for the platform OAuth callback")
     description = spec.get("metadata", {}).get("description")
     manifest: dict[str, Any] = {
         "_metadata": {"major_version": 1, "minor_version": 1},
@@ -36,7 +38,7 @@ def slack_manifest(spec: dict[str, Any]) -> dict[str, Any]:
             "bot_user": {"display_name": agent_name, "always_online": False},
         },
         "oauth_config": {
-            "redirect_urls": ["https://localhost/slack/oauth/callback"],
+            "redirect_urls": [redirect_uri],
             "scopes": {
                 "bot": ["app_mentions:read", "channels:history", "chat:write", "groups:history", "im:history"]
             }
@@ -59,10 +61,15 @@ def slack_manifest(spec: dict[str, Any]) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("spec", type=Path)
+    parser.add_argument(
+        "--redirect-uri",
+        required=True,
+        help="Public platform OAuth callback URL, e.g. the slack-oauth-callback API Gateway invoke URL.",
+    )
     args = parser.parse_args()
     spec = yaml.safe_load(args.spec.read_text(encoding="utf-8"))
     try:
-        manifest = slack_manifest(spec)
+        manifest = slack_manifest(spec, args.redirect_uri)
     except ValueError as error:
         print(error, file=sys.stderr)
         return 1
