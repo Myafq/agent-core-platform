@@ -28,6 +28,10 @@ class SlackManifestTests(unittest.TestCase):
             ["app_mentions:read", "channels:history", "chat:write", "groups:history", "im:history"],
         )
         self.assertEqual(
+            manifest["oauth_config"]["redirect_urls"],
+            ["https://localhost/slack/oauth/callback"],
+        )
+        self.assertEqual(
             manifest["settings"]["event_subscriptions"]["bot_events"],
             ["app_mention", "message.channels", "message.groups", "message.im"],
         )

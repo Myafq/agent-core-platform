@@ -36,6 +36,7 @@ def slack_manifest(spec: dict[str, Any]) -> dict[str, Any]:
             "bot_user": {"display_name": agent_name, "always_online": False},
         },
         "oauth_config": {
+            "redirect_urls": ["https://localhost/slack/oauth/callback"],
             "scopes": {
                 "bot": ["app_mentions:read", "channels:history", "chat:write", "groups:history", "im:history"]
             }
