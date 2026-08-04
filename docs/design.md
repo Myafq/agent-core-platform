@@ -191,6 +191,13 @@ For a new agent spec merged to `main`, the reconciler:
 6. waits for one human-created, app-specific `connections:write` token and
    writes it to the same `SecureString`.
 
+The local manifest allowlists only
+`https://localhost/slack/oauth/callback`. Slack redirects the operator's own
+browser there with the temporary code; no public callback service receives it.
+The browser may show a local connection error when no callback listener is
+running, but the operator can transfer the code through the approved temporary
+secret handoff. Production ingress must replace this development callback.
+
 The adapter launcher remains a manual macOS operator action. It loads only the
 named agent binding and credentials into ephemeral child-process environment
 values; it does not receive the provisioner parameter.

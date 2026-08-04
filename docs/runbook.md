@@ -298,7 +298,10 @@ HTTPS Events ingress in this sequence.
    workspace installation approval. Record the App ID, workspace ID, installer,
    manifest digest, and UTC time—never tokens. After approval, exchange the
    code and write only the app-specific bot token to that agent credentials
-   parameter.
+   parameter. The local manifest uses only
+   `https://localhost/slack/oauth/callback`; if no local listener is running,
+   the browser may fail to connect after approval while retaining the temporary
+   `code` in its address bar. Never paste that code into chat or logs.
 4. **External app token:** a human creates one per-app `connections:write`
    token for Socket Mode. Store it only in that agent credentials parameter.
    Neither a merge nor the provisioner token approves installation or creates
