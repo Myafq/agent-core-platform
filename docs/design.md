@@ -395,6 +395,35 @@ Never log or return App JWTs, installation tokens, private-key material,
 authorization headers, or raw provider errors. Return only the requested bounded
 repository content to Harness; never copy that content into diagnostics.
 
+### Container images
+
+Every deployable artifact is a container image. The broker Lambda uses
+`package_type = "Image"`; there is no zip packaging path.
+
+`containers/manifest.json` owns the buildable set. Terraform derives ECR
+repositories from it and `scripts/containers.py` derives builds from it, so a
+new image is declared once. Images are `arm64`.
+
+Identity is the source digest, not a version string. Each container's tag is a
+hash of the working-tree bytes of its tracked `sources` files plus its build
+configuration. The same source always produces the same tag, so "has this
+changed" is answered without a registry query, and "is it already published"
+is one immutable-tag lookup. This is what lets a pipeline build only what
+changed.
+
+Terraform consumes `@sha256:` digests, never tags. The `image_uri` variable
+rejects anything that is not a full 64-hex digest, so a mutable reference
+cannot reach a deployed function. Digests are pinned as reviewable literals in
+Terragrunt rather than read from a Terraform output, because an ECR output
+exposes only the mutable repository URL — a dependency edge would imply an
+automatic wiring that does not exist.
+
+Ownership of ECR repositories follows the resource that pins them.
+`modules/container-registry` owns repositories for new images.
+`github-app-tool-coding` remains in `modules/github-app-tool` while deployed
+Harness v20 pins a digest inside it; moving it is a separate, plan-reviewed
+migration.
+
 ### GitHub App
 
 MVP permissions:
@@ -543,3 +572,5 @@ validation task before implementation is called ready.
 11. Direct Harness GitHub tokens are a temporary home-lab risk acceptance.
     Keep the App private key Lambda-only and replace token delivery with a
     bounded server-side broker before production use.
+12. Deployable artifacts are container images identified by a source digest,
+    and deployments pin image digests, never tags.

@@ -9,6 +9,10 @@ locals {
   }
 }
 
+# Kept here rather than in modules/container-registry: Harness v20 pins an
+# immutable digest inside this exact repository. Migrating it would require
+# moving/recreating the repository, which risks that live pin. Migration to
+# the shared container-registry module is deliberately deferred.
 resource "aws_ecr_repository" "harness_coding" {
   name                 = "${var.name}-coding"
   image_tag_mutability = "IMMUTABLE"
@@ -68,15 +72,13 @@ resource "aws_iam_role_policy" "lambda" {
 }
 
 resource "aws_lambda_function" "broker" {
-  function_name    = var.name
-  role             = aws_iam_role.lambda.arn
-  handler          = "services.github_tool.handler.lambda_handler"
-  runtime          = "python3.11"
-  architectures    = ["x86_64"]
-  timeout          = 15
-  memory_size      = 256
-  filename         = var.lambda_package_path
-  source_code_hash = filebase64sha256(var.lambda_package_path)
+  function_name = var.name
+  role          = aws_iam_role.lambda.arn
+  package_type  = "Image"
+  image_uri     = var.image_uri
+  architectures = ["arm64"]
+  timeout       = 15
+  memory_size   = 256
   environment { variables = {
     GITHUB_APP_ID                     = var.github_app_id
     GITHUB_APP_INSTALLATION_ID        = var.github_app_installation_id
@@ -113,6 +115,13 @@ resource "aws_lambda_permission" "gateway" {
   function_name = aws_lambda_function.broker.function_name
   principal     = "bedrock-agentcore.amazonaws.com"
   source_arn    = aws_bedrockagentcore_gateway.this.gateway_arn
+
+  # Deleting a function deletes its resource-based policy, but function_name
+  # is unchanged by a replacement, so Terraform would otherwise see no diff
+  # and leave the Gateway unable to invoke the new function.
+  lifecycle {
+    replace_triggered_by = [aws_lambda_function.broker]
+  }
 }
 
 resource "aws_bedrockagentcore_gateway_target" "get_repository" {

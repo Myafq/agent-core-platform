@@ -43,12 +43,19 @@ adapter is launched manually. Shared HTTPS Events ingress is deferred to
 ```text
 agents/       portable agent specs and prompts
 clients/      CLI and channel adapters
+containers/   image definitions and the buildable-image manifest
 contracts/    executable channel/tool contracts
 modules/      Terraform resource mechanics
 live/         Terragrunt environment composition
+scripts/      build, validation, and provisioning tools
 docs/         design, status, and runbook
 TASKS.md      dependency-ordered implementation plan
 ```
+
+Deployables are container images, including the broker Lambda. Images are
+declared once in `containers/manifest.json`; `scripts/containers.py` tags each
+one by a digest of its declared sources, builds only what changed, and resolves
+pushed tags to the immutable `@sha256:` URIs that Terragrunt pins.
 
 ## Requirements
 
@@ -80,6 +87,7 @@ python3 -m venv .venv
 .venv/bin/python -m unittest discover -s tests
 .venv/bin/python scripts/validate_spec.py agents/github-assistant/agent.yaml
 .venv/bin/python scripts/validate_contracts.py
+.venv/bin/python scripts/containers.py plan --no-registry
 mise exec -- terraform fmt -check -recursive modules
 mise exec -- terragrunt hcl fmt --check
 git diff --check

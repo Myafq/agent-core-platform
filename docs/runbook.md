@@ -26,7 +26,8 @@ python3 -m venv .venv
 .venv/bin/python scripts/render_slack_manifest.py agents/github-assistant/agent.yaml \
   --redirect-uri "$SLACK_OAUTH_CALLBACK_URL" >/tmp/github-assistant-slack-manifest.json
 .venv/bin/python scripts/validate_contracts.py
-python3 -m py_compile scripts/validate_spec.py scripts/render_slack_manifest.py clients/cli/chat.py clients/telegram/bot.py clients/slack/bot.py clients/slack/reconciliation.py clients/slack/reconcile.py clients/slack/launcher.py contracts/slack_oauth_state.py services/slack_oauth_callback/callback.py services/slack_oauth_callback/handler.py
+.venv/bin/python scripts/containers.py plan --no-registry
+python3 -m py_compile scripts/containers.py scripts/validate_spec.py scripts/render_slack_manifest.py clients/cli/chat.py clients/telegram/bot.py clients/slack/reconciliation.py clients/slack/reconcile.py clients/slack/launcher.py contracts/slack_oauth_state.py services/slack_oauth_callback/callback.py services/slack_oauth_callback/handler.py
 python3 -m json.tool schemas/agent-v1alpha1.schema.json >/dev/null
 mise exec -- terraform fmt -check -recursive modules
 mise exec -- terragrunt hcl fmt --check
@@ -136,13 +137,70 @@ If any check fails, do not plan or apply the GitHub slice. Correct the external
 configuration first; do not compensate with wildcard repositories, broader App
 permissions, user tokens, or key material in Terraform.
 
+## Container images
+
+`containers/manifest.json` is the single source of truth for every buildable
+image. Each entry declares its `repository`, `dockerfile`, `context`,
+`platform`, and the `sources` prefixes that affect it.
+
+`scripts/containers.py` hashes the working-tree bytes of the tracked files
+under those prefixes, plus the build configuration, into a `src-<12 hex>` tag.
+ECR repositories use immutable tags, so an unchanged container is skipped
+rather than re-pushed. Uncommitted edits change the tag, so a local build
+always reflects what is on disk.
+
+```shell
+.venv/bin/python scripts/containers.py plan
+.venv/bin/python scripts/containers.py build --all --push
+.venv/bin/python scripts/containers.py digests --json
+```
+
+`plan --no-registry` computes tags with no AWS call. `plan --json` is the
+change-detection gate for a future CI pipeline: build only entries whose
+`action` is `build`. `build` without `--push` loads the image locally and
+publishes nothing. Pushing is a mutation and needs its own authorization.
+
+`digests --json` emits, per container name, the immutable
+`<registry>/<repository>@sha256:<digest>` URI. That value — never a tag, never
+a hand-written digest — is what gets pinned into Terragrunt.
+
 ## Plan order
 
 `platform/github-app-tool` and `agents/github-assistant` are both deployed.
-The Gateway, ECR repository, and broker Lambda (including `mintGitCredential`)
-already match source, and the Harness coding image `container_uri` is already
-pinned to the current credential-helper digest. No new image build and no
-platform (Gateway/Lambda) change is required for the remaining work below.
+
+PKG-001 applied on 2026-08-04: the broker Lambda is a digest-pinned `arm64`
+container image and `platform/container-registry` is deployed.
+
+To ship a broker code change, repeat this order:
+
+1. `scripts/containers.py plan` — confirm `github-tool` shows `build`.
+2. `scripts/containers.py build github-tool --push`.
+3. Put that container's `digests --json` `image_uri` into
+   `live/dev/us-east-1/platform/github-app-tool/terragrunt.hcl`. A digest that
+   was not produced by an actual push is never acceptable; `image_uri`
+   validation rejects anything but a full 64-hex digest.
+4. Plan `platform/github-app-tool`. A code-only change updates `image_uri` in
+   place. Accept a Lambda *replacement* only when package type or architecture
+   changes; if the function is replaced, `aws_lambda_permission.gateway` must
+   be replaced with it, because deleting a function deletes its resource-based
+   policy while `function_name` stays the same. `replace_triggered_by` enforces
+   this — do not remove it.
+5. After apply, confirm `State: Active`, `LastUpdateStatus: Successful`, and
+   that `aws lambda get-policy` still contains `AgentCoreGatewayInvoke`.
+
+Because change detection reads tracked files only, `git add` new container
+sources before building; `containers.py` fails rather than tagging an empty
+source set.
+
+Reject any plan that would destroy or recreate `aws_ecr_repository.harness_coding`
+(`github-app-tool-coding`). Deployed Harness v20 pins an immutable digest inside
+it. Moving that repository into `modules/container-registry` is deferred to
+PKG-002.
+
+### HARNESS-003 image and environment repair
+
+This subsection describes a separate, earlier change. Its acceptance rule below
+constrains that Harness plan only; it does not govern PKG-001.
 
 Harness v19 proved that control-plane environment variables were absent from
 fresh runtime shells. AgentCore also rejected `AWS_REGION` as reserved. The
@@ -162,10 +220,12 @@ non-secret broker-output mocks for `validate` and `plan`; the real platform
 outputs already exist in state, so this is not exercising the mock path.
 Mocks are never available to `apply`.
 
-Accept only that one in-place Harness image/environment update. Reject
-any Gateway/ECR/Lambda replacement, private-key values, broad IAM, OAuth/Token
-Vault resources, repository wildcards, arbitrary HTTP/Git execution, or host
-mounts — none of those are part of this change.
+In that Harness plan, accept only the one in-place image/environment update.
+Reject any Gateway/ECR/Lambda replacement, private-key values, broad IAM,
+OAuth/Token Vault resources, repository wildcards, arbitrary HTTP/Git
+execution, or host mounts — none of those are part of that change. PKG-001's
+authorized Lambda replacement happens in the `platform/github-app-tool` unit
+above, not here.
 
 Plans are safe. Apply requires its own explicit authorization immediately
 before use:

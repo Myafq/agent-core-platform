@@ -1,0 +1,9 @@
+.venv/
+.build/
+.git/
+.terragrunt-cache/
+**/__pycache__/
+**/*.pyc
+live/
+tests/
+.DS_Store

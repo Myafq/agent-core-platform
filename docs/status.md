@@ -258,6 +258,19 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
 - The installed GitHub App write permissions and selected-repository mutation
   path are verified by the successful native proof above.
 - No cloud, GitHub, Slack, or Telegram settings were changed during this review.
+- PKG-001 is applied. The broker Lambda is now a digest-pinned `arm64`
+  container image (`PackageType: Image`, `Active`, `LastUpdateStatus:
+  Successful`), not a zip package. A read-only `listRepositories` invocation
+  against the new image returned both selected repositories, so the image
+  reads the secret, mints an App JWT, and reaches GitHub. Zip packaging is
+  gone from source and from the deployment.
+- Plan review caught a defect the plan could not show: destroying a Lambda
+  deletes its resource-based policy, but `aws_lambda_permission.gateway` keys
+  off an unchanged `function_name` and so showed no diff. Without
+  `replace_triggered_by` the Gateway would have lost invoke permission
+  silently. The applied plan recreated the permission with the function.
+- `aws_ecr_repository.harness_coding` was not touched. Harness v20's pinned
+  coding-image digest is unchanged.
 
 ## Blockers
 
@@ -285,6 +298,17 @@ first `apply`; (4) generate a signed install link with
 Installation approval (now completed automatically by the deployed callback),
 per-app `connections:write` token creation, manual adapter launch, and live
 Harness invocation remain separate human actions/approvals.
+
+Next after PKG-001: the broker path is proven at the Lambda boundary only. A
+2026-08-04 Harness retry did not reach Gateway: `get-harness` showed v20
+`READY`, the `github-read` Gateway, and all nine `@github-read/*` operations,
+but the fresh runtime session exposed only `shell` and `file_operations` and
+rejected `@github-read/listRepositories` as unavailable. The Lambda log showed
+no Gateway invocation for that retry. Diagnose this control-plane/runtime tool
+discrepancy separately; do not attribute it to the container Lambda, whose
+direct read-only invocation succeeded. PKG-002 (moving the coding-image
+repository into `container-registry`) and CI-001 (wiring `containers.py plan
+--json` into a pipeline) remain open.
 
 Next for the GitHub/Harness slice: review PR #1 and separately decide whether to
 retire the now-proven Gateway fallback. No PR merge, Gateway retirement, or

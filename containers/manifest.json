@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "containers": [
+    {
+      "name": "github-tool",
+      "repository": "github-tool",
+      "dockerfile": "containers/github-tool/Dockerfile",
+      "context": ".",
+      "platform": "linux/arm64",
+      "kind": "lambda",
+      "sources": ["containers/github-tool/", "services/", "contracts/", "schemas/"]
+    },
+    {
+      "name": "harness-coding",
+      "repository": "github-app-tool-coding",
+      "dockerfile": "containers/harness-coding/Dockerfile",
+      "context": "containers/harness-coding",
+      "platform": "linux/arm64",
+      "kind": "harness",
+      "sources": ["containers/harness-coding/"]
+    }
+  ]
+}
