@@ -203,6 +203,28 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   were run for this implementation. No parameter write, Slack app change,
   plan/apply, installation, Socket Mode connection, user validation, or live
   invocation was performed.
+- `SLACK-004` is implemented offline: the temporary
+  `https://localhost/slack/oauth/callback` workflow is fully removed from
+  source and docs and replaced with `services/slack_oauth_callback`, a
+  single-purpose Lambda behind `modules/slack-oauth-callback` (HTTP API
+  Gateway; the only public route is `GET /slack/oauth/callback`).
+  `contracts/slack_oauth_state.py` signs/verifies a compact, expiring,
+  per-agent HMAC state; `clients/slack/reconciliation.py` now generates a
+  `state_signing_key` per agent, threads an exact `redirect_uri` into
+  `oauth.v2.access`, and adds a no-Slack/no-SSM-write `install-url` command;
+  `render_slack_manifest.py`, `reconcile.py`, and `launcher.py` all require an
+  explicit `--redirect-uri`. All 126 repository unit tests pass (27 new for
+  the callback, 20 new for state signing), covering missing/malformed/
+  expired/tampered state, workspace/App/bot-token mismatches, exact
+  `redirect_uri` equality, canonical SSM paths and `SecureString` writes, and
+  that a duplicate/replayed callback cannot corrupt a completed installation.
+  `terraform validate` passed for the new module and an authorized read-only
+  `terragrunt plan` against the real `dev`/`us-east-1` backend showed exactly
+  10 resources to add, 0 to change, 0 to destroy, with no drift against any
+  existing resource. No apply, Slack manifest create/update, installation
+  approval, or live callback invocation has run; the Slack app manifest in
+  Slack itself still reflects whatever was last applied (nothing, per
+  `SLACK-002`'s status above).
 - A direct IAM Harness-to-Gateway request listed selected repositories. No
   Telegram/Slack-to-GitHub invocation or live GitHub mutation has succeeded.
 - The current Harness plan and apply evidence is recorded above. No new plan
@@ -252,10 +274,15 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
 
 ## Next
 
-Next for the user-prioritized Slack slice: the operator runs the focused and
-full offline validation in `docs/runbook.md`. If it passes, bootstrap the Slack
-configuration token pair in SSM, review a reconciliation `plan`, and use the
-standing `main` merge authorization for the first `apply`. Installation,
+Next for the user-prioritized Slack slice, in order: (1) review and explicitly
+authorize `terragrunt apply` for `platform/slack-oauth-callback` — the
+reviewed plan is 10 to add, 0 to change, 0 to destroy — then record its
+`callback_url` output; (2) bootstrap the Slack configuration token pair in
+SSM; (3) review a reconciliation `plan` rendered with that exact
+`--redirect-uri`, then use the standing `main` merge authorization for the
+first `apply`; (4) generate a signed install link with
+`reconcile.py install-url` and route it to an authorized workspace approver.
+Installation approval (now completed automatically by the deployed callback),
 per-app `connections:write` token creation, manual adapter launch, and live
 Harness invocation remain separate human actions/approvals.
 

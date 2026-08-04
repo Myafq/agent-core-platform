@@ -127,7 +127,7 @@ def _required_string(values: Mapping[str, Any], field: str, source: str) -> str:
     return value
 
 
-def _agent_source(path: str, raw_spec: str) -> AgentSource | None:
+def _agent_source(path: str, raw_spec: str, redirect_uri: str) -> AgentSource | None:
     if yaml is None:
         raise ReconcileError("missing runtime dependency 'yaml'")
     try:
@@ -148,7 +148,7 @@ def _agent_source(path: str, raw_spec: str) -> AgentSource | None:
     try:
         from scripts.render_slack_manifest import slack_manifest
 
-        manifest = slack_manifest(spec)
+        manifest = slack_manifest(spec, redirect_uri)
     except (ImportError, ValueError) as error:
         raise ReconcileError(f"unable to render Slack manifest: {path}") from error
     manifest_json = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -160,15 +160,19 @@ def _agent_source(path: str, raw_spec: str) -> AgentSource | None:
     )
 
 
-def discover_slack_agents(reader: MainContentReader) -> dict[str, AgentSource]:
+def discover_slack_agents(reader: MainContentReader, redirect_uri: str) -> dict[str, AgentSource]:
     """Return Slack-enabled agents from the selected merged Git ref.
+
+    `redirect_uri` must be the same platform OAuth callback URL reconciliation
+    used, so the recomputed manifest digest can confirm the binding is
+    reconciled for that URL.
 
     Any malformed enabled spec aborts the whole discovery, preventing a Git read
     failure from being mistaken for deletion of locally running adapters.
     """
     agents: dict[str, AgentSource] = {}
     for path in reader.agent_paths():
-        source = _agent_source(path, reader.read(path))
+        source = _agent_source(path, reader.read(path), redirect_uri)
         if source is None:
             continue
         if source.name in agents:
@@ -285,6 +289,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--profile", default="default")
     parser.add_argument("--agent", required=True, help="metadata.name of one Slack-enabled agent")
     parser.add_argument("--harness-arn", required=True)
+    parser.add_argument("--redirect-uri", required=True, help="Platform OAuth callback URL used by reconciliation.")
     parser.add_argument("--parameter-prefix", default=DEFAULT_BINDING_PREFIX)
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
@@ -298,7 +303,7 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(message)s",
     )
     try:
-        source = discover_slack_agents(GitMainContentReader(PROJECT_ROOT)).get(args.agent)
+        source = discover_slack_agents(GitMainContentReader(PROJECT_ROOT), args.redirect_uri).get(args.agent)
         if source is None:
             raise ReconcileError(f"Slack agent is not enabled in merged main: {args.agent}")
         config = adapter_config(

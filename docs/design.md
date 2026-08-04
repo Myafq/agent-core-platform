@@ -67,6 +67,9 @@ flowchart LR
 | Harness to Gateway | Harness execution role | `InvokeGateway` on one Gateway and exact `allowedTools` |
 | Gateway to Lambda | Gateway service role | `lambda:InvokeFunction` on one qualified function ARN |
 | Lambda to GitHub | GitHub App JWT exchanged for an installation token | selected installation, repository allow-list, and exact App permissions |
+| Browser to `slack-oauth-callback` | none (public HTTPS `GET`); the request itself carries a signed, expiring, per-agent `state` | state signature verified against the claimed agent's `state_signing_key`; workspace, App ID, and `redirect_uri` pinned to the values the state was signed for; the exchanged `code` is single-use at Slack |
+| `slack-oauth-callback` to Slack | Slack App `client_id`/`client_secret` (per agent, read from SSM) | fixed `https://slack.com/api/oauth.v2.access` endpoint only; response `ok`, workspace, App ID, and bot token are all re-checked before any write |
+| `slack-oauth-callback` to SSM | Lambda execution role | `ssm:GetParameter`/`ssm:PutParameter` on only `/agent-core/slack/agents/*/{binding,credentials}`; `kms:Decrypt`/`kms:Encrypt`/`kms:GenerateDataKey` on `alias/aws/ssm` |
 
 The adapter derives `runtimeUserId`; users never supply it. It is a session and
 memory partition key, not proof that GitHub acted as that user. Use a
@@ -161,8 +164,8 @@ Use Standard-tier parameters and keep every JSON value below 4 KB:
 | Parameter | Type | Contents |
 |---|---|---|
 | `/agent-core/slack/provisioner/config` | `SecureString` | Configuration access token and refresh token only. Updated together after every rotation. |
-| `/agent-core/slack/agents/<metadata.name>/binding` | `String` | Workspace ID, Slack App ID, manifest digest, installation state, and last successful reconcile time. No secret values. |
-| `/agent-core/slack/agents/<metadata.name>/credentials` | `SecureString` | Client secret, signing secret, bot token, and local-phase app token. Missing values remain absent, never empty placeholders. |
+| `/agent-core/slack/agents/<metadata.name>/binding` | `String` | Workspace ID, Slack App ID, manifest digest, installation state, and last successful reconcile time. The callback Lambda additionally records `bot_user_id` and `granted_scopes` here after a successful install; both are nonsecret audit fields. No secret values. |
+| `/agent-core/slack/agents/<metadata.name>/credentials` | `SecureString` | Client secret, signing secret, `state_signing_key` (generated locally at app creation; authenticates install-link state, never returned by Slack), bot token, and local-phase app token. Missing values remain absent, never empty placeholders. |
 
 Use the default `alias/aws/ssm` key for the cost-lean home-lab phase. IAM is the
 decryption boundary: the reconciler may read/write the provisioner path and all
@@ -181,22 +184,99 @@ apply, or a live Harness invocation.
 
 For a new agent spec merged to `main`, the reconciler:
 
-1. validates the YAML and renders the exact Slack manifest;
+1. validates the YAML and renders the exact Slack manifest, including the
+   platform callback URL as the sole `oauth_config.redirect_urls` entry;
 2. creates the app with `apps.manifest.create`, or updates its recorded App ID;
-3. stores the returned client secret and signing secret in the agent's SSM
-   `SecureString` parameter;
-4. emits the returned Slack installation URL as an approval action;
-5. waits for a human workspace installation approval, then exchanges the OAuth
-   code and stores the app-specific bot token;
+3. stores the returned client secret and signing secret, plus a freshly
+   generated `state_signing_key`, in the agent's SSM `SecureString` parameter;
+4. builds and emits a Slack `oauth/v2/authorize` install URL carrying the
+   platform `redirect_uri` and a signed, expiring `state` (see below) as an
+   approval action; `clients/slack/reconcile.py install-url` can mint a fresh
+   one later without any Slack or SSM write, if the first link expires before
+   a human clicks it;
+5. waits for a human workspace installation approval; Slack then redirects
+   the browser to the public callback, which exchanges the code and stores
+   the app-specific bot token itself (below) — reconciliation performs no
+   further action for this step;
 6. waits for one human-created, app-specific `connections:write` token and
    writes it to the same `SecureString`.
 
-The local manifest allowlists only
-`https://localhost/slack/oauth/callback`. Slack redirects the operator's own
-browser there with the temporary code; no public callback service receives it.
-The browser may show a local connection error when no callback listener is
-running, but the operator can transfer the code through the approved temporary
-secret handoff. Production ingress must replace this development callback.
+### Public Slack OAuth installation callback
+
+Socket Mode remains the only channel for runtime events; it needs no public
+request URL. The one exception is completing app installation itself: Slack
+redirects the installing user's browser to a fixed `redirect_uri` with a
+temporary `code`, and that redirect must reach something the internet can
+resolve. `services/slack_oauth_callback` is a single-purpose Lambda behind an
+HTTP API Gateway that exists only to complete `GET /slack/oauth/callback`; it
+is the only public HTTP ingress in the Slack slice, and adding any other
+public route (in particular a permanent Slack Events API endpoint) is out of
+scope here and remains gated behind `SLACK-003`.
+
+```mermaid
+flowchart LR
+  B["Installing user's browser"] -->|"GET /slack/oauth/callback?code&state"| G["API Gateway (HTTP API)"]
+  G --> L["slack-oauth-callback Lambda"]
+  L -->|"POST oauth.v2.access, exact redirect_uri"| SL["slack.com"]
+  L -->|"read client_id/client_secret/state_signing_key\nwrite bot_token, installation_state"| P["SSM /agent-core/slack/agents/<name>/*"]
+```
+
+State is a compact HMAC-SHA256 token (`contracts/slack_oauth_state.py`)
+binding the agent name, workspace ID, Slack App ID, redirect URI, and a short
+expiry (default 10 minutes). The install-URL generator signs it with the
+target agent's own `state_signing_key`; the callback verifies it the same
+way an unverified JWT `kid` is used — it reads the *claimed* agent name from
+the token only to select which agent's key to check the signature against,
+then rejects the request outright if that signature does not verify. A
+forged or replayed token for a different agent, workspace, App, or redirect
+URI fails closed before any Slack call or SSM write. The callback also
+requires `oauth.v2.access` to report `ok: true`, a bot access token, the
+same workspace ID the state named (which must equal the platform's
+configured `SLACK_WORKSPACE_ID`, `T0BKR092ATB` for the deployed workspace),
+and — when Slack includes it — the same App ID recorded in the binding; any
+mismatch fails closed without writing SSM. Because a duplicated or replayed
+callback either reuses an already-consumed authorization code (Slack itself
+rejects the second exchange) or an expired/tampered state, no SSM write ever
+happens for a request that is not a genuinely new, first-use installation
+completion, so retries cannot corrupt a good installation.
+
+The Lambda extends the existing per-agent SSM schema rather than introducing
+a new credential model: it reads and writes exactly the same
+`/agent-core/slack/agents/<name>/{binding,credentials}` pair that
+`clients/slack/reconciliation.py` and `clients/slack/launcher.py` already
+own, using the same `SecureString`/`alias/aws/ssm` conventions. Its IAM role
+is narrowly scoped to `ssm:GetParameter`/`ssm:PutParameter` on only the
+`.../binding` and `.../credentials` paths under the agents prefix (never the
+provisioner configuration path) plus `kms:Decrypt`/`kms:Encrypt`/`kms:GenerateDataKey` on
+that same key, and CloudWatch Logs write access. It never logs the raw query
+string, state token, authorization code, client secret, signing secret,
+state signing key, or bot token — only a fixed error classification, plus,
+on success, the agent name, App ID, bot user ID, and scope count. It returns
+minimal HTML with no token or Slack API payload; a failure page carries only
+a safe message and a correlation ID (the Lambda request ID) an operator can
+correlate against CloudWatch, never the cause in raw form.
+
+Required deployment order, to avoid a chicken-and-egg between the platform
+callback and the Slack app configuration that depends on its URL:
+
+1. deploy the callback Lambda/API Gateway (`platform/slack-oauth-callback`);
+2. read its stable `callback_url` Terraform output;
+3. render/apply the Slack manifest with that URL as `--redirect-uri`
+   (`clients/slack/reconcile.py apply`), so the App's registered
+   `oauth_config.redirect_urls` matches exactly what the Lambda expects;
+4. generate a signed installation URL for that same `--redirect-uri`
+   (`clients/slack/reconcile.py install-url`);
+5. a human opens that URL and approves installation in the target
+   workspace;
+6. Slack redirects to the callback, which exchanges the code and persists
+   the installation.
+
+Rollback means removing the API Gateway route or reverting to the prior
+validated Lambda version; it does not require deleting the Slack App,
+installation, or any SSM parameter. Because state signing keys are per agent,
+disabling one agent's callback path (or rotating its `state_signing_key`,
+which invalidates only its own outstanding install links) never affects
+another agent's installation flow.
 
 The adapter launcher remains a manual macOS operator action. It loads only the
 named agent binding and credentials into ephemeral child-process environment
@@ -388,8 +468,9 @@ receive only their own GitHub results; token reuse and revocation are tested.
 Target state owners:
 
 ```text
-platform/github-app-tool  -> Gateway, Lambda target, Lambda, roles, logs
-agents/github-assistant   -> Harness, execution role, model/tool configuration
+platform/github-app-tool       -> Gateway, Lambda target, Lambda, roles, logs
+platform/slack-oauth-callback  -> Lambda, HTTP API Gateway, IAM role, logs
+agents/github-assistant        -> Harness, execution role, model/tool configuration
 ```
 
 GitHub App registration, installation, repository selection, and private-key

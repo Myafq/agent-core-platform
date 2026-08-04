@@ -30,9 +30,12 @@ from clients.slack.reconciliation import (
 )
 
 
+REDIRECT_URI_COMMANDS = frozenset({"plan", "apply", "install-url", "complete-oauth"})
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("plan", "apply", "complete-oauth", "set-app-token"))
+    parser.add_argument("command", choices=("plan", "apply", "install-url", "complete-oauth", "set-app-token"))
     parser.add_argument("--spec", type=Path, required=True)
     parser.add_argument("--workspace-id", required=True)
     parser.add_argument("--region", default="us-east-1")
@@ -43,7 +46,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--adopt-app-id")
     parser.add_argument("--oauth-code-env")
     parser.add_argument("--app-token-env")
-    return parser.parse_args()
+    parser.add_argument(
+        "--redirect-uri",
+        help="Public platform OAuth callback URL (required for plan, apply, install-url, complete-oauth).",
+    )
+    args = parser.parse_args()
+    if args.command in REDIRECT_URI_COMMANDS and not args.redirect_uri:
+        parser.error(f"--redirect-uri is required for {args.command!r}.")
+    return args
 
 
 def parameter_paths(args: argparse.Namespace, spec: dict[str, Any]) -> ParameterPaths:
@@ -71,17 +81,23 @@ def main() -> int:
         paths = parameter_paths(args, spec)
         if args.command == "plan":
             reconciler = SlackReconciler(_ssm(args))
-            print(json.dumps(reconciler.plan(spec, args.workspace_id, paths, adopt_app_id=args.adopt_app_id).safe_output(), sort_keys=True))
+            print(json.dumps(reconciler.plan(spec, args.workspace_id, paths, args.redirect_uri, adopt_app_id=args.adopt_app_id).safe_output(), sort_keys=True))
+            return 0
+        if args.command == "install-url":
+            if args.adopt_app_id is not None:
+                raise ReconciliationError("--adopt-app-id is only valid for plan or apply.")
+            reconciler = SlackReconciler(_ssm(args))
+            print(reconciler.installation_url(spec, args.workspace_id, paths, args.redirect_uri))
             return 0
         reconciler = SlackReconciler(_ssm(args), SlackSdkProvisionerApi())
         if args.command == "apply":
-            print(json.dumps(reconciler.apply(spec, args.workspace_id, paths, adopt_app_id=args.adopt_app_id).safe_output(), sort_keys=True))
+            print(json.dumps(reconciler.apply(spec, args.workspace_id, paths, args.redirect_uri, adopt_app_id=args.adopt_app_id).safe_output(), sort_keys=True))
             return 0
         if args.adopt_app_id is not None:
             raise ReconciliationError("--adopt-app-id is only valid for plan or apply.")
         if args.command == "complete-oauth":
             code = _environment_value(args.oauth_code_env, "--oauth-code-env")
-            binding = reconciler.complete_oauth(args.workspace_id, paths, code)
+            binding = reconciler.complete_oauth(args.workspace_id, paths, code, args.redirect_uri)
             print(json.dumps({"action": "oauth_completed", "app_id": binding.app_id, "workspace_id": binding.workspace_id}, sort_keys=True))
             return 0
         app_token = _environment_value(args.app_token_env, "--app-token-env")
