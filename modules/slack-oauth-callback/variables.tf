@@ -24,9 +24,14 @@ variable "agent_parameter_prefix" {
   default     = "/agent-core/slack/agents"
 }
 
-variable "lambda_package_path" {
-  description = "Path to the zipped services/slack_oauth_callback deployment package."
+variable "image_uri" {
+  description = "Digest-pinned ECR image URI for the callback Lambda (package_type = Image)."
   type        = string
+
+  validation {
+    condition     = can(regex("@sha256:[0-9a-f]{64}$", var.image_uri))
+    error_message = "image_uri must end in a full @sha256:<64 hex> image digest; a mutable tag or placeholder is not allowed."
+  }
 }
 
 variable "log_retention_days" {

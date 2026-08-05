@@ -187,23 +187,17 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   private-channel-history, DM-history, and write scopes. The adapter checks the
   workspace and provisioned Slack App ID, acknowledges before Harness work,
   deduplicates retries, rejects bot loops/unregistered threads, and sends
-  bounded plain-text threaded replies with unfurls disabled. No Slack app,
-  installation, token, Socket Mode connection, or live invocation was created
-  or exercised.
-- `SLACK-002` is implemented but not user-validated. Its scope is one existing macOS
-  host and one Slack workspace: `main` merge is standing authorization for
-  Slack manifest create/update and exact Slack SSM writes, while human install
-  approval and one per-app `connections:write` token remain external steps.
-  Controller and adapter processes remain manual. `metadata.name` is immutable,
-  `slack.name` is mutable display intent, binding loss requires explicit exact
-  App-ID adoption, removals preserve external state, and failures preserve the
-  current process. Source now contains an idempotent reconciliation CLI, fake
-  client tests, and a manual selected-agent launcher that reads merged `main`
-  intent and decrypts only that agent's credentials. No tests or validators
-  were run for this implementation. No parameter write, Slack app change,
-  plan/apply, installation, Socket Mode connection, user validation, or live
-  invocation was performed.
-- `SLACK-004` is implemented offline: the temporary
+  bounded plain-text threaded replies with unfurls disabled. On 2026-08-04 the
+  operator confirmed both DM sessions and mention-started channel threads,
+  including threaded follow-ups, work as expected through the live Harness.
+- `SLACK-002` is deployed and user-validated for one macOS host and workspace
+  `T0BKR092ATB`. Reconciliation updated exact App `A0BMSFX33T5`; signed OAuth
+  installed bot `U0BMVTXSYH1`; the per-app `connections:write` token was stored
+  in the agent's `SecureString`; and read-only verification found binding state
+  `socket_mode_ready`. The manually launched adapter connected successfully,
+  and the operator confirmed DM and channel-thread behavior. Controller and
+  adapter processes remain manual. No credential value was read or recorded.
+- `SLACK-004` is deployed: the temporary
   `https://localhost/slack/oauth/callback` workflow is fully removed from
   source and docs and replaced with `services/slack_oauth_callback`, a
   single-purpose Lambda behind `modules/slack-oauth-callback` (HTTP API
@@ -218,13 +212,16 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   expired/tampered state, workspace/App/bot-token mismatches, exact
   `redirect_uri` equality, canonical SSM paths and `SecureString` writes, and
   that a duplicate/replayed callback cannot corrupt a completed installation.
-  `terraform validate` passed for the new module and an authorized read-only
-  `terragrunt plan` against the real `dev`/`us-east-1` backend showed exactly
-  10 resources to add, 0 to change, 0 to destroy, with no drift against any
-  existing resource. No apply, Slack manifest create/update, installation
-  approval, or live callback invocation has run; the Slack app manifest in
-  Slack itself still reflects whatever was last applied (nothing, per
-  `SLACK-002`'s status above).
+  Current validation passes all 160 repository unit tests. The authorized
+  2026-08-04 apply created exactly 10 resources, 0 changed, and 0 destroyed.
+  Read-only verification found the digest-pinned `arm64` image Lambda `Active`
+  with `LastUpdateStatus: Successful`, API Gateway route exactly
+  `GET /slack/oauth/callback`, its scoped invoke permission, and a no-change
+  follow-up plan. The callback URL is
+  `https://weil984s77.execute-api.us-east-1.amazonaws.com/slack/oauth/callback`.
+  The signed installation callback succeeded at 2026-08-04T23:50:41Z with
+  redacted-safe request ID `5bc3846c-2fd8-4677-ae08-1aaf772fb931`, App and
+  workspace validation, five granted scopes, and no secret output.
 - A direct IAM Harness-to-Gateway request listed selected repositories. No
   Telegram/Slack-to-GitHub invocation or live GitHub mutation has succeeded.
 - The current Harness plan and apply evidence is recorded above. No new plan
@@ -257,13 +254,17 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
 - No Telegram/Slack-to-GitHub invocation or live mutation has succeeded.
 - The installed GitHub App write permissions and selected-repository mutation
   path are verified by the successful native proof above.
-- No cloud, GitHub, Slack, or Telegram settings were changed during this review.
+- The Slack OAuth callback infrastructure was applied; no GitHub, Slack, or
+  Telegram setting was changed.
 - PKG-001 is applied. The broker Lambda is now a digest-pinned `arm64`
   container image (`PackageType: Image`, `Active`, `LastUpdateStatus:
   Successful`), not a zip package. A read-only `listRepositories` invocation
   against the new image returned both selected repositories, so the image
   reads the secret, mints an App JWT, and reaches GitHub. Zip packaging is
   gone from source and from the deployment.
+- Both Lambdas in the repository are deployed as container images.
+  `slack-oauth-callback` uses the pinned digest
+  `sha256:80d4fc9962a491300005855a8d7a5ad5467a9f09c1129f3edb5d72e1119027e7`.
 - Plan review caught a defect the plan could not show: destroying a Lambda
   deletes its resource-based policy, but `aws_lambda_permission.gateway` keys
   off an unchanged `function_name` and so showed no diff. Without
@@ -274,12 +275,10 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
 
 ## Blockers
 
-- Slack configuration access/refresh tokens are not supplied. `SLACK-002`
-  cannot reconcile until the one-workspace bootstrap exists. Each new app still
-  needs human installation approval and a human-created per-app
-  `connections:write` token before its manually started Socket Mode process can
-  connect. No parameters, Slack settings, reconciliation apply, or live
-  invocation was performed.
+- The Slack chat path has no current functional blocker. Its temporary
+  operating constraint is one manually launched Socket Mode process and one
+  per-app `connections:write` token; `SLACK-003` owns the shared HTTPS Events
+  ingress replacement.
 - The scoped GitHub platform and Harness plans applied. No GitHub App settings
   changed from this environment.
 - User-delegated GitHub remains blocked on a fixed and isolated Harness 3LO path
@@ -287,17 +286,10 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
 
 ## Next
 
-Next for the user-prioritized Slack slice, in order: (1) review and explicitly
-authorize `terragrunt apply` for `platform/slack-oauth-callback` — the
-reviewed plan is 10 to add, 0 to change, 0 to destroy — then record its
-`callback_url` output; (2) bootstrap the Slack configuration token pair in
-SSM; (3) review a reconciliation `plan` rendered with that exact
-`--redirect-uri`, then use the standing `main` merge authorization for the
-first `apply`; (4) generate a signed install link with
-`reconcile.py install-url` and route it to an authorized workspace approver.
-Installation approval (now completed automatically by the deployed callback),
-per-app `connections:write` token creation, manual adapter launch, and live
-Harness invocation remain separate human actions/approvals.
+The user-prioritized Slack slice is live for DM and channel-thread chat.
+`SLACK-003` remains optional hardening: replace the manual per-app Socket Mode
+process/token with a shared HTTPS Events ingress. `CHAT-001` and `E2E-001`
+remain open because Telegram and Slack-to-GitHub proofs are separate gates.
 
 Next after PKG-001: the broker path is proven at the Lambda boundary only. A
 2026-08-04 Harness retry did not reach Gateway: `get-harness` showed v20

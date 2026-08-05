@@ -355,11 +355,12 @@ stores no message content.
 slice: `GET /slack/oauth/callback` only. It must exist, with a known
 `callback_url`, before the Slack manifest is rendered/applied for real,
 because the manifest's `oauth_config.redirect_urls` and every install link
-must carry that exact URL. Build its package, then plan (apply needs its own
+must carry that exact URL. Its image is already built and pinned; rebuild and
+re-pin only if the service source changed, then plan (apply needs its own
 explicit authorization):
 
 ```shell
-scripts/package_slack_oauth_callback.sh
+.venv/bin/python scripts/containers.py plan
 cd live/dev/us-east-1/platform/slack-oauth-callback
 mise exec -- terragrunt plan
 ```

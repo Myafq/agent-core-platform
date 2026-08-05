@@ -11,6 +11,20 @@
       "sources": ["containers/github-tool/", "services/", "contracts/", "schemas/"]
     },
     {
+      "name": "slack-oauth-callback",
+      "repository": "slack-oauth-callback",
+      "dockerfile": "containers/slack-oauth-callback/Dockerfile",
+      "context": ".",
+      "platform": "linux/arm64",
+      "kind": "lambda",
+      "sources": [
+        "containers/slack-oauth-callback/",
+        "services/__init__.py",
+        "services/slack_oauth_callback/",
+        "contracts/slack_oauth_state.py"
+      ]
+    },
+    {
       "name": "harness-coding",
       "repository": "github-app-tool-coding",
       "dockerfile": "containers/harness-coding/Dockerfile",

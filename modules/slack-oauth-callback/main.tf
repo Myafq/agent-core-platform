@@ -80,15 +80,13 @@ resource "aws_iam_role_policy" "lambda" {
 }
 
 resource "aws_lambda_function" "callback" {
-  function_name    = var.name
-  role             = aws_iam_role.lambda.arn
-  handler          = "services.slack_oauth_callback.handler.lambda_handler"
-  runtime          = "python3.11"
-  architectures    = ["x86_64"]
-  timeout          = 10
-  memory_size      = 128
-  filename         = var.lambda_package_path
-  source_code_hash = filebase64sha256(var.lambda_package_path)
+  function_name = var.name
+  role          = aws_iam_role.lambda.arn
+  package_type  = "Image"
+  image_uri     = var.image_uri
+  architectures = ["arm64"]
+  timeout       = 10
+  memory_size   = 128
   environment {
     variables = {
       SLACK_WORKSPACE_ID           = var.slack_workspace_id
@@ -156,4 +154,11 @@ resource "aws_lambda_permission" "apigw" {
   function_name = aws_lambda_function.callback.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.this.execution_arn}/*/*"
+
+  # Deleting a function deletes its resource-based policy, but function_name
+  # is unchanged by a replacement, so Terraform would otherwise see no diff
+  # and leave API Gateway unable to invoke the new function.
+  lifecycle {
+    replace_triggered_by = [aws_lambda_function.callback]
+  }
 }
