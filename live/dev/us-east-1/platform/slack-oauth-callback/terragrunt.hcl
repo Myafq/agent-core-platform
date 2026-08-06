@@ -8,7 +8,7 @@ inputs = {
   # Re-pin from `TARGET=slack-oauth-callback mise run container:push` output
   # after rebuilding a clean committed revision; never hand-write a digest.
   image_uri        = "803629127460.dkr.ecr.us-east-1.amazonaws.com/slack-oauth-callback@sha256:80d4fc9962a491300005855a8d7a5ad5467a9f09c1129f3edb5d72e1119027e7"
-  events_image_uri = "803629127460.dkr.ecr.us-east-1.amazonaws.com/slack-events@sha256:f0dacf3770524d466daa480358165cb72d6a8dfaca780a846462f945305a56ee"
+  events_image_uri = "803629127460.dkr.ecr.us-east-1.amazonaws.com/slack-events@sha256:c67c95a9bc224432fb517dcba7bfc1c30ee838e0d9839d8ad03a2d01fac33581"
   slack_agents = {
     github-assistant = {
       app_id       = "A0BMSFX33T5"

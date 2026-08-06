@@ -63,7 +63,7 @@ flowchart LR
 |---|---|---|
 | Telegram to adapter | Telegram Bot API over the bot-authenticated `getUpdates` channel | private chats and configured Telegram user allow-list |
 | Slack to adapter | HMAC-signed HTTPS Events request | per-agent route, signing secret, workspace ID, and App ID; DMs and threads opened by mentioning an invited bot |
-| Adapter to Harness | one narrowly scoped AWS IAM role using SigV4 | `bedrock-agentcore:InvokeAgentRuntime` on one exact Harness ARN; the SDK operation is `InvokeHarness` |
+| Adapter to Harness | one narrowly scoped AWS IAM role using SigV4 | `bedrock-agentcore:InvokeAgentRuntime` and `bedrock-agentcore:InvokeHarness` on one exact Harness ARN; deployed SDK versions have authorized the same `InvokeHarness` operation under both action names |
 | Harness to Gateway | Harness execution role | `InvokeGateway` on one Gateway and exact `allowedTools` |
 | Gateway to Lambda | Gateway service role | `lambda:InvokeFunction` on one qualified function ARN |
 | Lambda to GitHub | GitHub App JWT exchanged for an installation token | selected installation, repository allow-list, and exact App permissions |

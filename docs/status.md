@@ -1,6 +1,6 @@
 # Current status
 
-Last updated: 2026-08-04
+Last updated: 2026-08-05
 
 ## Design decision
 
@@ -199,7 +199,7 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
 - `SLACK-003` now replaces Socket Mode with signed per-agent HTTPS
   Events routes on the existing API Gateway, FIFO SQS dispatch, a separate
   worker Lambda, and hashed DynamoDB event/thread/session state. The old bot,
-  launcher, app-token CLI, and tests are removed. The ARM64 image is pinned at
+  launcher, app-token CLI, and tests are removed. The deployed ARM64 image is
   `sha256:f0dacf3770524d466daa480358165cb72d6a8dfaca780a846462f945305a56ee`.
   The 2026-08-04 apply added 16 resources and replaced only the callback's
   API-wide invoke permission with an exact GET permission. Slack App
@@ -211,14 +211,20 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   image extracts the agent from HTTP API `rawPath` and uses `actorId` for
   Harness invocation. The next live event exposed a worker-role mismatch: the
   SDK operation is `InvokeHarness`, but IAM authorizes it as
-  `bedrock-agentcore:InvokeAgentRuntime`. Source now grants that action on only
-  the configured Harness ARN. The IAM update is not yet applied, and post-fix
-  live invocation is not yet verified.
+  `bedrock-agentcore:InvokeAgentRuntime` in the prior image and
+  `bedrock-agentcore:InvokeHarness` in the refactored image. The worker role now
+  grants both action names on the exact Harness ARN; IAM simulation allows the
+  current `InvokeHarness` action. The intermediate apply changed both
+  Lambda handler overrides to the moved `slack_events.*` modules while retaining
+  the old image, causing `Runtime.ImportModuleError` before invocation.
 - Container source is now co-located under each `containers/<name>/service`
   tree. `docker-bake.hcl` replaces the deleted Python build framework. All
-  three ARM64 service images build and import locally. No refactored image was
-  pushed or pinned; do not apply the current handler-command plan against the
-  old Slack Events digest.
+  three ARM64 service images build and import locally. Refactored Slack Events
+  image `sha256:c67c95a9bc224432fb517dcba7bfc1c30ee838e0d9839d8ad03a2d01fac33581`
+  is now deployed to both Events Lambdas; both are `Active` with successful
+  updates and the moved modules import successfully. The final IAM apply changed
+  one inline policy in place, with no additions or destroys; the post-apply
+  Terraform plan has no drift. A fresh live Slack event remains the E2E gate.
 - `SLACK-004` is deployed: the temporary
   `https://localhost/slack/oauth/callback` workflow is fully removed from
   source and docs and replaced with `containers/slack-oauth-callback`, a

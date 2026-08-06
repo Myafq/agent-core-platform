@@ -191,8 +191,11 @@ resource "aws_iam_role_policy" "events_worker" {
         Resource = aws_sqs_queue.events[each.key].arn
       },
       {
-        Effect   = "Allow"
-        Action   = ["bedrock-agentcore:InvokeAgentRuntime"]
+        Effect = "Allow"
+        Action = [
+          "bedrock-agentcore:InvokeAgentRuntime",
+          "bedrock-agentcore:InvokeHarness",
+        ]
         Resource = [for agent in values(var.slack_agents) : agent.harness_arn]
       },
     ]
