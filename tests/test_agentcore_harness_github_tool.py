@@ -5,31 +5,69 @@ from __future__ import annotations
 from pathlib import Path
 import unittest
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT / "modules" / "agentcore-harness"
-COMPOSITION = ROOT / "live" / "dev" / "us-east-1" / "agents" / "github-assistant" / "terragrunt.hcl"
-PROMPT = ROOT / "agents" / "github-assistant" / "prompts" / "system.md"
+ENTRYPOINT = ROOT / "entrypoints" / "agents" / "terragrunt.hcl"
+COMPOSITION = ROOT / "compositions" / "agents" / "main.tf"
+MANIFEST = ROOT / "agents" / "github-assistant" / "agent.yaml"
 
 
 class AgentCoreHarnessChatOnlyTests(unittest.TestCase):
     def setUp(self) -> None:
         self.main = (MODULE / "main.tf").read_text(encoding="utf-8")
         self.variables = (MODULE / "variables.tf").read_text(encoding="utf-8")
+        self.entrypoint = ENTRYPOINT.read_text(encoding="utf-8")
         self.composition = COMPOSITION.read_text(encoding="utf-8")
-        self.prompt = PROMPT.read_text(encoding="utf-8")
+        self.manifest = MANIFEST.read_text(encoding="utf-8")
+        self.prompt = yaml.safe_load(self.manifest)["spec"]["instructions"]["system"]["text"]
         self.coding_image = ROOT / "containers" / "harness-coding"
 
     def test_composition_consumes_only_the_platform_gateway_output(self) -> None:
-        self.assertIn('source = "../../../../../modules/agentcore-harness"', self.composition)
-        self.assertIn('dependency "github_app_tool"', self.composition)
-        self.assertIn('config_path = "../../platform/github-app-tool"', self.composition)
-        self.assertRegex(
-            self.composition,
-            r"gateway_arn\s+= dependency\.github_app_tool\.outputs\.gateway_arn",
+        self.assertIn('source = "${get_repo_root()}//compositions/agents"', self.entrypoint)
+        self.assertIn('source = "../../modules/agentcore-harness"', self.composition)
+        self.assertIn('dependency "github_app_tool"', self.entrypoint)
+        self.assertIn("enabled     = local.use_github_app_tool", self.entrypoint)
+        self.assertIn(
+            'config_path = "${get_repo_root()}/live/${local.environment}/${local.aws_region}/platform/github-app-tool"',
+            self.entrypoint,
         )
+        self.assertRegex(
+            self.entrypoint,
+            r"gateway_arn\s+= local\.use_github_app_tool"
+            r" \? dependency\.github_app_tool\.outputs\.gateway_arn : null",
+        )
+        self.assertNotIn("oauth", self.entrypoint.lower())
+        self.assertNotIn("jwt", self.entrypoint.lower())
         self.assertNotIn("oauth", self.composition.lower())
         self.assertNotIn("jwt", self.composition.lower())
+
+    def test_entrypoint_pins_environment_and_region_to_its_platform_binding(self) -> None:
+        self.assertIn('supported_environment = "dev"', self.entrypoint)
+        self.assertIn('supported_aws_region  = "us-east-1"', self.entrypoint)
+        self.assertIn("guard_environment", self.entrypoint)
+        self.assertIn("guard_aws_region", self.entrypoint)
+        self.assertIn('Environment = "${local.environment}"', self.entrypoint)
+        self.assertIn('key          = "agents/${local.agent_name}/terraform.tfstate"', self.entrypoint)
+        self.assertIn(
+            'live/${local.environment}/${local.aws_region}/platform/github-app-tool',
+            self.entrypoint,
+        )
+
+    def test_entrypoint_validates_manifest_and_prompt_before_reading_inputs(self) -> None:
+        realpath_guard = self.entrypoint.index("guard_manifest_realpath")
+        validator = self.entrypoint.index("scripts/validate_spec.py")
+        manifest_decode = self.entrypoint.index("manifest = yamldecode")
+        backend = self.entrypoint.index("remote_state {")
+
+        self.assertLess(realpath_guard, validator)
+        self.assertLess(validator, manifest_decode)
+        self.assertLess(manifest_decode, backend)
+        self.assertIn("resolve(strict=True)", self.entrypoint)
+        self.assertIn("manifest path resolves outside", self.entrypoint)
+        self.assertIn('"--terragrunt-quiet"', self.entrypoint)
 
     def test_harness_has_model_prompt_limits_and_managed_memory(self) -> None:
         self.assertIn('resource "aws_bedrockagentcore_harness" "this"', self.main)
@@ -57,14 +95,21 @@ class AgentCoreHarnessChatOnlyTests(unittest.TestCase):
         self.assertIn('resources = [statement.value]', self.main)
         self.assertIn('container_repository_arn', self.variables)
         self.assertIn('container_repository_arn is required when container_uri is set', self.main)
-        self.assertRegex(self.composition, r'container_repository_arn\s+= "arn:aws:ecr:')
+        self.assertRegex(self.manifest, r"image: \S+@sha256:[0-9a-f]{64}")
+        self.assertIn(
+            '"arn:aws:ecr:${local.container_uri_parts[1]}'
+            ":${local.container_uri_parts[0]}"
+            ':repository/${local.container_uri_parts[2]}"',
+            self.entrypoint,
+        )
 
     def test_workspace_uses_per_session_managed_storage(self) -> None:
         self.assertIn('resource "terraform_data" "session_storage_environment"', self.main)
         self.assertIn('networkMode = "PUBLIC"', self.main)
         self.assertIn('sessionStorage', self.main)
         self.assertIn('session_storage_mount_path must be directly under /mnt', self.variables)
-        self.assertIn('session_storage_mount_path', self.composition)
+        self.assertIn('session_storage_mount_path', self.entrypoint)
+        self.assertNotIn('agentcore-workspace', self.entrypoint)
         self.assertNotIn('agentcore-workspace', self.composition)
         self.assertNotIn('elasticfilesystem:', self.main)
 

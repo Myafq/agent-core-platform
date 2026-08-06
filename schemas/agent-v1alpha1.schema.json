@@ -41,7 +41,18 @@
           "additionalProperties": false,
           "required": ["type"],
           "properties": {
-            "type": {"const": "harness"}
+            "type": {"const": "harness"},
+            "container": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["image"],
+              "properties": {
+                "image": {
+                  "type": "string",
+                  "pattern": "^[0-9]{12}\\.dkr\\.ecr\\.[a-z][a-z0-9-]*[a-z0-9]\\.amazonaws\\.com/[a-z0-9]+(?:[._/-][a-z0-9]+)*@sha256:[0-9a-f]{64}$"
+                }
+              }
+            }
           }
         },
         "model": {
@@ -64,11 +75,11 @@
             "system": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["file"],
+              "required": ["text"],
               "properties": {
-                "file": {
+                "text": {
                   "type": "string",
-                  "pattern": "^[A-Za-z0-9._/-]+\\.md$"
+                  "minLength": 1
                 }
               }
             }
@@ -90,6 +101,17 @@
                   "pattern": "^[^\\r\\n]+$"
                 }
               }
+            }
+          }
+        },
+        "tools": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "gateways": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {"enum": ["github-app-tool"]}
             }
           }
         },

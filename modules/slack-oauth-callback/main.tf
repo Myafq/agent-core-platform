@@ -5,15 +5,39 @@
 locals {
   common_tags                = merge(var.tags, { Component = "slack-oauth-callback" })
   agent_parameter_arn_prefix = "arn:aws:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:parameter${var.agent_parameter_prefix}"
-  event_agent_parameter_arns = flatten([for agent_name in keys(var.slack_agents) : ["${local.agent_parameter_arn_prefix}/${agent_name}/binding", "${local.agent_parameter_arn_prefix}/${agent_name}/credentials"]])
-  events_enabled             = var.events_image_uri != null && length(var.slack_agents) > 0
+  event_agent_parameter_arns = flatten([for agent_name in var.slack_agent_names : ["${local.agent_parameter_arn_prefix}/${agent_name}/binding", "${local.agent_parameter_arn_prefix}/${agent_name}/credentials"]])
+  events_enabled             = var.events_image_uri != null && length(var.slack_agent_names) > 0
   events                     = local.events_enabled ? { enabled = true } : {}
   redirect_uri               = "${trimsuffix(aws_apigatewayv2_stage.default.invoke_url, "/")}/slack/oauth/callback"
-  events_url                 = { for agent_name in keys(var.slack_agents) : agent_name => "${trimsuffix(aws_apigatewayv2_stage.default.invoke_url, "/")}/slack/events/${agent_name}" }
+  events_url                 = { for agent_name in var.slack_agent_names : agent_name => "${trimsuffix(aws_apigatewayv2_stage.default.invoke_url, "/")}/slack/events/${agent_name}" }
+  slack_bindings = {
+    for agent_name, parameter in data.aws_ssm_parameter.agent_binding :
+    agent_name => jsondecode(nonsensitive(parameter.value))
+  }
+  slack_agent_harnesses = {
+    for agent_name, state in data.terraform_remote_state.agent :
+    agent_name => state.outputs.harness_arn
+  }
 }
 
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
+
+data "aws_ssm_parameter" "agent_binding" {
+  for_each        = var.slack_agent_names
+  name            = "${var.agent_parameter_prefix}/${each.key}/binding"
+  with_decryption = false
+}
+
+data "terraform_remote_state" "agent" {
+  for_each = var.slack_agent_names
+  backend  = "s3"
+  config = {
+    bucket = var.agent_state.bucket
+    key    = "agents/${each.key}/terraform.tfstate"
+    region = var.agent_state.region
+  }
+}
 
 data "aws_kms_alias" "ssm" {
   name = "alias/aws/ssm"
@@ -196,7 +220,7 @@ resource "aws_iam_role_policy" "events_worker" {
           "bedrock-agentcore:InvokeAgentRuntime",
           "bedrock-agentcore:InvokeHarness",
         ]
-        Resource = [for agent in values(var.slack_agents) : agent.harness_arn]
+        Resource = values(local.slack_agent_harnesses)
       },
     ]
   })
@@ -265,7 +289,7 @@ resource "aws_lambda_function" "events_worker" {
   environment {
     variables = {
       LOG_LEVEL                    = "INFO"
-      SLACK_AGENT_HARNESSES        = jsonencode({ for agent_name, agent in var.slack_agents : agent_name => agent.harness_arn })
+      SLACK_AGENT_HARNESSES        = jsonencode(local.slack_agent_harnesses)
       SLACK_AGENT_PARAMETER_PREFIX = var.agent_parameter_prefix
       SLACK_EVENT_STATE_TABLE      = aws_dynamodb_table.events_state[each.key].name
     }
@@ -365,10 +389,26 @@ resource "aws_apigatewayv2_route" "callback" {
 }
 
 resource "aws_apigatewayv2_route" "events" {
-  for_each  = local.events_enabled ? var.slack_agents : {}
+  for_each  = local.events_enabled ? { for agent_name in var.slack_agent_names : agent_name => agent_name } : {}
   api_id    = aws_apigatewayv2_api.this.id
   route_key = "POST /slack/events/${each.key}"
   target    = "integrations/${aws_apigatewayv2_integration.events_ingress["enabled"].id}"
+
+  lifecycle {
+    precondition {
+      condition = (
+        try(local.slack_bindings[each.key].agent_name, null) == each.key &&
+        try(local.slack_bindings[each.key].workspace_id, null) == var.slack_workspace_id &&
+        can(regex("^A[A-Z0-9]+$", try(local.slack_bindings[each.key].app_id, "")))
+      )
+      error_message = "Slack-enabled agent '${each.key}' requires an exact non-secret SSM binding for the configured workspace and App ID. Run Slack reconciliation before planning its shared route."
+    }
+
+    precondition {
+      condition     = can(regex("^arn:[^:]+:bedrock-agentcore:[^:]+:[0-9]{12}:harness/.+$", try(local.slack_agent_harnesses[each.key], "")))
+      error_message = "Slack-enabled agent '${each.key}' requires a deployed manifest-owned agent state with a valid harness_arn output."
+    }
+  }
 }
 
 # $default with auto_deploy publishes whenever the route/integration change;
@@ -416,7 +456,7 @@ resource "aws_lambda_permission" "apigw" {
 }
 
 resource "aws_lambda_permission" "events_ingress" {
-  for_each      = local.events_enabled ? var.slack_agents : {}
+  for_each      = local.events_enabled ? { for agent_name in var.slack_agent_names : agent_name => agent_name } : {}
   statement_id  = "ApiGatewayInvokeSlackEvents${replace(title(each.key), "-", "")}"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.events_ingress["enabled"].function_name

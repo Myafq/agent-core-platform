@@ -18,20 +18,29 @@ variable "slack_workspace_id" {
   }
 }
 
-variable "slack_agents" {
-  description = "Exact per-agent route, Slack App/workspace, and Harness bindings. Empty keeps Events resources disabled until digest-pinned images are available."
-  type = map(object({
-    app_id       = string
-    workspace_id = string
-    harness_arn  = string
-  }))
-  default = {}
+variable "slack_agent_names" {
+  description = "Manifest-derived names of Slack-enabled agents. Environment bindings remain in SSM; Harness ARNs come from the corresponding manifest-owned remote states."
+  type        = set(string)
+  default     = []
 
   validation {
     condition = alltrue([
-      for agent_name, agent in var.slack_agents : can(regex("^[a-z][a-z0-9-]{0,38}[a-z0-9]$", agent_name)) && can(regex("^A[A-Z0-9]+$", agent.app_id)) && can(regex("^T[A-Z0-9]+$", agent.workspace_id)) && can(regex("^arn:[^:]+:bedrock-agentcore:[^:]+:[0-9]{12}:harness/.+$", agent.harness_arn))
+      for agent_name in var.slack_agent_names : can(regex("^[a-z][a-z0-9-]{0,38}[a-z0-9]$", agent_name))
     ])
-    error_message = "slack_agents keys must be agent names with valid Slack App/workspace IDs and exact AgentCore Harness ARNs."
+    error_message = "slack_agent_names must contain lowercase DNS-style manifest identities."
+  }
+}
+
+variable "agent_state" {
+  description = "Remote-state location for manifest-owned agent states. Keys are derived as agents/<name>/terraform.tfstate."
+  type = object({
+    bucket = string
+    region = string
+  })
+
+  validation {
+    condition     = var.agent_state.bucket != "" && can(regex("^[a-z]{2}(-gov)?-[a-z]+-[0-9]+$", var.agent_state.region))
+    error_message = "agent_state requires a non-empty bucket and AWS region."
   }
 }
 

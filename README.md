@@ -40,12 +40,14 @@ and Slack manifest reconciliation.
 ## Layout
 
 ```text
-agents/       portable agent specs and prompts
+agents/       portable agent manifests
 clients/      CLI and channel adapters
+compositions/ typed Terraform wiring
 containers/   image definitions and containerized services
 contracts/    executable channel/tool contracts
+entrypoints/  runtime-parameterized Terragrunt bindings
 modules/      Terraform resource mechanics
-live/         Terragrunt environment composition
+live/         shared Terragrunt environment resources
 scripts/      build, validation, and provisioning tools
 docs/         design, status, and runbook
 TASKS.md      dependency-ordered implementation plan
@@ -88,8 +90,10 @@ python3 -m venv .venv
 .venv/bin/python -m unittest discover -s tests
 .venv/bin/python scripts/validate_spec.py agents/github-assistant/agent.yaml
 .venv/bin/python scripts/validate_contracts.py
+.venv/bin/python scripts/resolve_agent_targets.py
 mise run container:check
 mise exec -- terraform fmt -check -recursive modules
+mise exec -- terraform fmt -check -recursive compositions
 mise exec -- terragrunt hcl fmt --check
 git diff --check
 ```

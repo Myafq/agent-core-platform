@@ -46,6 +46,32 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
 
 ## Design validation completed
 
+- ARCH-004 implements manifest-driven provisioning: one self-contained agent
+  manifest per object, one runtime-parameterized entrypoint, and one stable
+  remote state per manifest. `entrypoints/agents` validates the target's
+  schema and canonical path before backend use, rejects environment/region
+  drift from its `dev/us-east-1` binding, disables unrequested Gateway
+  dependencies, and passes typed inputs to `compositions/agents`. Shared-code
+  changes fan out across base/head manifests. A deletion requires both
+  `--allow-retire` and a new immutable descriptor that materializes the base
+  manifest for a reviewed destroy plan. Shared Slack state derives membership
+  from Slack-enabled manifests, reads only non-secret SSM bindings, and joins
+  manifest-owned `harness_arn` outputs; missing or mismatched bindings fail the
+  plan. On 2026-08-05 the deployed
+  github-assistant state was migrated by a server-side S3 copy from
+  `dev/us-east-1/agents/github-assistant/terraform.tfstate` (pre-migration
+  version `srH23VGcEERDJcn5ljEumNTM2skpf1qS`, frozen in the versioned bucket)
+  to `agents/github-assistant/terraform.tfstate`; the reviewed plan and apply
+  recorded only the five root-to-`module.harness` address moves (0 added, 0
+  changed, 0 destroyed), the follow-up plan has no drift, and
+  `terragrunt output -raw harness_arn` reads back from the new unit. The
+  object-specific `live/dev/us-east-1/agents/github-assistant` entrypoint and
+  external prompt file were removed. On 2026-08-06 all 155 unit tests,
+  spec/contracts, Python compilation, schema parsing, Terraform/Terragrunt
+  formatting, target/guard checks, and whitespace checks passed. Live plans
+  for both the migrated agent and shared Slack unit reported no changes. No AWS
+  resource was created, changed, or destroyed.
+
 - Official AWS documentation confirms Harness supports declarative Gateway
   tools and `allowedTools`.
 - Official AWS documentation confirms Gateway supports Lambda targets using the
@@ -248,7 +274,8 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   expired/tampered state, workspace/App/bot-token mismatches, exact
   `redirect_uri` equality, canonical SSM paths and `SecureString` writes, and
   that a duplicate/replayed callback cannot corrupt a completed installation.
-  Current validation passes all 130 repository unit tests. The authorized
+  A later 130-test suite also passed; the current suite is 155 tests and passes.
+  The authorized
   2026-08-04 apply created exactly 10 resources, 0 changed, and 0 destroyed.
   Read-only verification found the digest-pinned `arm64` image Lambda `Active`
   with `LastUpdateStatus: Successful`, API Gateway route exactly

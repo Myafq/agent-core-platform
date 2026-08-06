@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate an AgentCore declarative agent specification and local references."""
+"""Validate an AgentCore declarative agent specification."""
 
 from __future__ import annotations
 
@@ -48,19 +48,8 @@ def main() -> int:
             print(f"{location}: {error.message}", file=sys.stderr)
         return 1
 
-    prompt_reference = spec["spec"]["instructions"]["system"]["file"]
-    prompt_path = (spec_path.parent / prompt_reference).resolve()
-    try:
-        prompt_path.relative_to(spec_path.parent)
-    except ValueError:
-        print("spec.instructions.system.file escapes the agent directory", file=sys.stderr)
-        return 1
-
-    if not prompt_path.is_file():
-        print(f"Referenced prompt does not exist: {prompt_path}", file=sys.stderr)
-        return 1
-    if not prompt_path.read_text(encoding="utf-8").strip():
-        print(f"Referenced prompt is empty: {prompt_path}", file=sys.stderr)
+    if not spec["spec"]["instructions"]["system"]["text"].strip():
+        print("spec.instructions.system.text must not be empty", file=sys.stderr)
         return 1
 
     print(f"Valid: {spec_path}")

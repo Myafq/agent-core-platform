@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import subprocess
 from pathlib import Path
 import sys
@@ -29,10 +28,6 @@ class ValidateSpecTests(unittest.TestCase):
         self.temporary_directory.cleanup()
 
     def write_spec(self) -> Path:
-        (self.agent_directory / "prompts").mkdir(exist_ok=True)
-        (self.agent_directory / "prompts" / "system.md").write_text(
-            "You are a test agent.\n", encoding="utf-8"
-        )
         spec_path = self.agent_directory / "agent.yaml"
         spec_path.write_text(yaml.safe_dump(self.spec), encoding="utf-8")
         return spec_path
@@ -50,6 +45,55 @@ class ValidateSpecTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Valid:", result.stdout)
+
+    def test_accepts_specs_without_container_and_tools(self) -> None:
+        del self.spec["spec"]["engine"]["container"]
+        del self.spec["spec"]["tools"]
+
+        result = self.validate(self.write_spec())
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Valid:", result.stdout)
+
+    def test_rejects_tag_pinned_container_images(self) -> None:
+        self.spec["spec"]["engine"]["container"]["image"] = (
+            "803629127460.dkr.ecr.us-east-1.amazonaws.com/github-app-tool-coding:latest"
+        )
+
+        result = self.validate(self.write_spec())
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("does not match", result.stderr)
+
+    def test_rejects_truncated_container_image_digests(self) -> None:
+        self.spec["spec"]["engine"]["container"]["image"] = (
+            "803629127460.dkr.ecr.us-east-1.amazonaws.com/github-app-tool-coding"
+            "@sha256:ecb32df1a3814a799d"
+        )
+
+        result = self.validate(self.write_spec())
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("does not match", result.stderr)
+
+    def test_rejects_container_images_outside_ecr(self) -> None:
+        self.spec["spec"]["engine"]["container"]["image"] = (
+            "docker.io/library/github-app-tool-coding"
+            "@sha256:ecb32df1a3814a799dc9bfe98d9439341041492b693a7183b62d94da5a0d130a"
+        )
+
+        result = self.validate(self.write_spec())
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("does not match", result.stderr)
+
+    def test_rejects_unknown_tool_gateways(self) -> None:
+        self.spec["spec"]["tools"]["gateways"] = ["github-app-tool", "shadow-gateway"]
+
+        result = self.validate(self.write_spec())
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("is not one of", result.stderr)
 
     def test_rejects_unknown_fields(self) -> None:
         self.spec["spec"]["unexpected"] = True
@@ -85,22 +129,22 @@ class ValidateSpecTests(unittest.TestCase):
         self.assertIn("'harness' was expected", result.stderr)
         self.assertIn("'bedrock' was expected", result.stderr)
 
-    def test_rejects_prompt_references_outside_the_agent_directory(self) -> None:
-        self.spec["spec"]["instructions"]["system"]["file"] = "../escaped.md"
-        (self.workspace / "escaped.md").write_text("Not an agent prompt.\n", encoding="utf-8")
+    def test_rejects_legacy_prompt_file_references(self) -> None:
+        self.spec["spec"]["instructions"]["system"] = {"file": "prompts/system.md"}
 
         result = self.validate(self.write_spec())
 
         self.assertEqual(result.returncode, 1)
-        self.assertIn("escapes the agent directory", result.stderr)
+        self.assertIn("'text' is a required property", result.stderr)
+        self.assertIn("Additional properties are not allowed", result.stderr)
 
-    def test_rejects_missing_prompts(self) -> None:
-        self.spec["spec"]["instructions"]["system"]["file"] = "prompts/missing.md"
+    def test_rejects_empty_inline_prompts(self) -> None:
+        self.spec["spec"]["instructions"]["system"]["text"] = " \n\t"
 
         result = self.validate(self.write_spec())
 
         self.assertEqual(result.returncode, 1)
-        self.assertIn("Referenced prompt does not exist", result.stderr)
+        self.assertIn("spec.instructions.system.text must not be empty", result.stderr)
 
 
 if __name__ == "__main__":

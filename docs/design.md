@@ -86,7 +86,7 @@ feature is designed.
 
 ### Agent contract
 
-`agents/<name>/agent.yaml` owns portable intent: model, prompt, limits, tags,
+`agents/<name>/agent.yaml` owns portable intent: model, inline prompt, limits, tags,
 normalized capability names, and requested interfaces. A Slack interface is
 declared with display intent only:
 
@@ -99,9 +99,11 @@ spec:
 
 The platform compiles this into the reviewed Slack app manifest. The environment
 binding owns the Slack workspace and App IDs, app and bot token references,
-Harness ARN, IAM role, and adapter deployment. The agent YAML does not contain
-provider ARNs, account IDs, installation IDs, channel tokens, private keys,
-callback URLs, or IAM.
+IAM role, and adapter deployment. Shared Slack state derives membership from
+Slack-enabled manifests, joins each name to its non-secret SSM binding and
+manifest-owned `harness_arn` state output, and remains the sole owner of routes
+and invoke permissions. The agent YAML does not contain provider ARNs, account
+IDs, installation IDs, channel tokens, private keys, callback URLs, or IAM.
 
 The compiler boundary must emit a normalized object before Terraform modules
 consume it. Raw YAML field naming must not leak into modules.
@@ -371,12 +373,86 @@ receive only their own GitHub results; token reuse and revocation are tested.
 
 ## State and lifecycle
 
+### Manifest-driven provisioning
+
+Provisioned domain objects follow this invariant:
+
+> One declarative manifest per real-world object; one generic entrypoint per
+> kind of object; one state per manifest, addressed by the manifest's own
+> identity.
+
+The manifest tree is the GitOps interface and the only object-specific surface
+edited by a human. Adding an object must not add or edit Terraform, Terragrunt,
+backend configuration, or any other infrastructure code. State is created in
+the remote backend by the first apply; no generated backend or provider file is
+committed.
+
+The layers have one-way dependencies:
+
+```text
+agents/<name>/agent.yaml  -> declarative agent intent
+entrypoints/agents        -> target selection, backend, providers, translation
+compositions/agents       -> resource wiring, lookups, adoption, invariants
+modules/<resource>        -> one provider-resource concern
+```
+
+The binding entrypoint is a function of kind and target identity. The target
+manifest arrives at runtime. Only that layer may read the manifest, derive the
+backend key, configure providers, apply environment defaults/baselines, and
+translate domain vocabulary into composition inputs. Compositions receive
+plain typed inputs; they do not read files or branch on environment. Modules
+do not know about manifests or their callers.
+
+For agents, canonical identity is the manifest-relative agent name and the
+backend key is `agents/<name>/terraform.tfstate`. The identity-to-key function
+must remain total, injective, and stable. A rename is therefore a lifecycle
+operation, not an incidental file move, and requires a reviewed migration or
+explicit replacement decision.
+
+Lifecycle rules:
+
+- Manifest absence never silently authorizes destroy. CI must require explicit
+  retirement intent, an immutable base-manifest descriptor, and a reviewed
+  destroy plan.
+- Defaults, non-overridable baselines, and wholly injected resources are
+  documented and owned by the binding layer; secrets remain references.
+- Every cross-manifest resource or row has exactly one state owner. If it is
+  computed from multiple manifests, that owner reads the union of claims and
+  CI fans out changes using both base and head references so removals run.
+- Existing objects are adopted declaratively and idempotently by the
+  composition. Operators do not use an alternate import-only entrypoint.
+- Local, bulk, and CI runs use the same target-parameterized invocation. CI
+  only maps diffs to targets; it does not own a separate provisioning path.
+  Shared entrypoint, composition, agent-module, schema, and validator changes
+  fan out to every applicable manifest using both Git refs.
+- Per-target generated data and caches are isolated. One target must never
+  reuse another target's initialized backend or provider artifacts.
+
+For the agent kind, the binding layer is `entrypoints/agents` and the
+composition is `compositions/agents`. The manifest owns the inline system
+prompt and deployment vocabulary: `spec.engine.container.image` is a
+digest-pinned private ECR URI from which the binding derives the repository
+ARN; `spec.tools.gateways` is a closed set of platform gateway names, where
+`github-app-tool` binds the platform Gateway and credential-broker outputs.
+The binding validates the complete manifest and canonical real path before
+backend/provider initialization. It currently supports only `dev/us-east-1`;
+other environment or region values fail before selecting state. The binding
+also owns provider/backend configuration, environment tags, and the
+`/mnt/workspace` session-storage default.
+
+The former object-specific `live/dev/us-east-1/agents/github-assistant`
+entrypoint predated this invariant and was retired by ARCH-004: its state was
+migrated to the manifest-derived key through a separately reviewed, versioned
+state copy plus declarative `moved` blocks that proved no resource recreation
+(the migration record is in `docs/runbook.md`). Do not resurrect
+object-specific entrypoints for new agents.
+
 Target state owners:
 
 ```text
 platform/github-app-tool       -> Gateway, Lambda target, Lambda, roles, logs
 platform/slack-oauth-callback  -> Lambda, HTTP API Gateway, IAM role, logs
-agents/github-assistant        -> Harness, execution role, model/tool configuration
+agents/<name>                  -> Harness, execution role, model/tool configuration
 ```
 
 GitHub App registration, installation, repository selection, and private-key
@@ -452,3 +528,6 @@ validation task before implementation is called ready.
     bounded server-side broker before production use.
 12. Deployable artifacts are ARM64 container images built from a clean commit,
     and deployments pin image digests, never tags.
+13. Provisioning is manifest-driven: one manifest per object, one
+    runtime-parameterized entrypoint per kind, and one stable remote state per
+    manifest.

@@ -31,6 +31,7 @@ mise run container:check
 python3 -m py_compile scripts/validate_spec.py scripts/render_slack_manifest.py clients/cli/chat.py clients/telegram/bot.py clients/slack/reconciliation.py clients/slack/reconcile.py contracts/slack_oauth_state.py containers/github-tool/service/github_tool/broker.py containers/github-tool/service/github_tool/handler.py containers/slack-oauth-callback/service/slack_oauth_callback/callback.py containers/slack-oauth-callback/service/slack_oauth_callback/handler.py containers/slack-events/service/slack_events/core.py containers/slack-events/service/slack_events/ingress.py containers/slack-events/service/slack_events/worker.py
 python3 -m json.tool schemas/agent-v1alpha1.schema.json >/dev/null
 mise exec -- terraform fmt -check -recursive modules
+mise exec -- terraform fmt -check -recursive compositions
 mise exec -- terragrunt hcl fmt --check
 git diff --check
 ```
@@ -155,6 +156,63 @@ builds and pushes the selected target, then prints its immutable
 `<registry>/<repository>@sha256:<digest>` URI. Pushing is a mutation and needs
 its own authorization.
 
+## Agent provisioning (manifest-driven)
+
+`agents/<name>/agent.yaml` is the only object-specific surface. The generic
+unit `entrypoints/agents` provisions any agent from a runtime target;
+`compositions/agents` wires `modules/agentcore-harness`. State lives at
+`agents/<name>/terraform.tfstate` in the existing state bucket; per-target
+caches are isolated under `.terragrunt-cache/agents/<name>`.
+
+Resolve targets with the same command locally and in CI:
+
+```shell
+.venv/bin/python scripts/resolve_agent_targets.py
+.venv/bin/python scripts/resolve_agent_targets.py --diff <base> <head>
+```
+
+Shared entrypoint, composition, agent-module, schema, and validator changes fan
+out to all applicable manifests. A deleted manifest makes diff-mode resolution
+fail until retirement is acknowledged and written to a new descriptor:
+
+```shell
+.venv/bin/python scripts/resolve_agent_targets.py \
+  --diff <base> <head> \
+  --allow-retire <name> \
+  --retirement-output <new-path>.json
+```
+
+The descriptor pins resolved base/head commits, the base manifest-tree object,
+and `agents/<name>/terraform.tfstate`. Follow its detached-worktree procedure
+to materialize the base manifest and run `terragrunt plan -destroy`; review the
+saved plan before apply. It refuses to overwrite an existing descriptor.
+Manifest absence or `--allow-retire` alone never authorizes destroy.
+
+Plan one agent (apply requires its own explicit authorization):
+
+```shell
+cd entrypoints/agents
+MANIFEST_TARGET=agents/github-assistant/agent.yaml mise exec -- terragrunt plan
+```
+
+The entrypoint is bound to `dev/us-east-1`; unsupported `ENVIRONMENT` or
+`AWS_REGION` values fail before backend use. It validates the manifest and its
+canonical path during configuration evaluation. The manifest declares its
+inline system prompt, digest-pinned container image
+(`spec.engine.container.image`) and gateway bindings (`spec.tools.gateways`;
+the only known value, `github-app-tool`, binds the platform Gateway and
+credential-broker outputs). The entrypoint injects everything else: backend
+and provider configuration, environment tags, and the `/mnt/workspace`
+session-storage default.
+
+Migration record (2026-08-05): the github-assistant state was server-side
+copied from `dev/us-east-1/agents/github-assistant/terraform.tfstate`
+(pre-migration version `srH23VGcEERDJcn5ljEumNTM2skpf1qS`, frozen in the
+versioned bucket) to `agents/github-assistant/terraform.tfstate`. The reviewed
+apply recorded only five root-to-`module.harness` address moves with 0
+added/changed/destroyed and a no-drift follow-up plan. Recovery: copy that
+frozen version back. The old key is superseded; never plan or apply against it.
+
 ## Plan order
 
 `platform/github-app-tool` and `agents/github-assistant` are both deployed.
@@ -201,8 +259,8 @@ and pinned at
 Plan only the Harness unit:
 
 ```shell
-cd live/dev/us-east-1/agents/github-assistant
-mise exec -- terragrunt plan
+cd entrypoints/agents
+MANIFEST_TARGET=agents/github-assistant/agent.yaml mise exec -- terragrunt plan
 ```
 
 The Harness dependency shallow-merges real platform state with checked-in,
@@ -297,7 +355,7 @@ export TELEGRAM_ALLOWED_USER_ID=123456789
   --region "$AWS_REGION" \
   --profile "$AWS_PROFILE" \
   --allowed-user-id "$TELEGRAM_ALLOWED_USER_ID" \
-  --harness-arn "$(cd live/dev/us-east-1/agents/github-assistant && mise exec -- terragrunt output -raw harness_arn)"
+  --harness-arn "$(cd entrypoints/agents && MANIFEST_TARGET=agents/github-assistant/agent.yaml mise exec -- terragrunt output -raw harness_arn)"
 ```
 
 `TELEGRAM_ALLOWED_USER_ID` is your numeric Telegram account ID, not a username
@@ -349,8 +407,11 @@ same reason.
 ## Slack Events migration gate
 
 The dev Events path is deployed. For later agents or image revisions, push with
-explicit authorization, pin the real digest as `events_image_uri`, configure
-the exact `slack_agents` map, and review the plan. Accept only two Lambdas,
+explicit authorization, pin the real digest as `events_image_uri`, and review
+the plan. The shared unit discovers each Slack-enabled agent manifest, reads
+only its non-secret SSM binding, and obtains `harness_arn` from
+`agents/<name>/terraform.tfstate`; missing or mismatched bindings fail the
+plan. Credentials are not read. Accept only two Lambdas, manifest-derived
 per-agent POST routes, FIFO queue plus DLQ, PAY_PER_REQUEST state table, exact
 SSM/KMS paths, and exact Harness ARNs.
 
