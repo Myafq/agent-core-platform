@@ -221,14 +221,18 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   tree. `docker-bake.hcl` replaces the deleted Python build framework. All
   three ARM64 service images build and import locally. Refactored Slack Events
   image `sha256:c67c95a9bc224432fb517dcba7bfc1c30ee838e0d9839d8ad03a2d01fac33581`
-  is now deployed to both Events Lambdas; both are `Active` with successful
-  updates and the moved modules import successfully. The final IAM apply changed
-  one inline policy in place, with no additions or destroys; the post-apply
-  Terraform plan has no drift. A fresh live Slack event remains the E2E gate.
+  was deployed to both Events Lambdas and proved the moved modules imported
+  successfully. The later working-status image is recorded below.
 - The Slack Events worker now sets Slack's native thread working status before
   Harness invocation. It uses the existing `chat:write` scope, auto-clears when
-  the reply posts, and degrades safely if the status API is unavailable. This
-  source change is not built, deployed, or live-verified.
+  the reply posts, and degrades safely if the status API is unavailable. Image
+  `sha256:6c4ad76ccf32cc656f086ee202e6c1a4c8dae1dd2ec63f6dad4483c1de704a96`
+  was deployed 2026-08-05 to both Events Lambdas. The reviewed apply updated
+  both in place and replaced only the exact Events invoke permission: 1 added,
+  2 changed, 1 destroyed. Both are ARM64, `Active`, and `Successful`; the exact
+  digest is resolved on both, the permission allows only the agent POST route,
+  and the follow-up plan has no drift. On 2026-08-05 the operator confirmed the
+  working status appears during a live request and clears when the reply arrives.
 - `SLACK-004` is deployed: the temporary
   `https://localhost/slack/oauth/callback` workflow is fully removed from
   source and docs and replaced with `containers/slack-oauth-callback`, a
