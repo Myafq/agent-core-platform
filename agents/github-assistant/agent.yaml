@@ -59,6 +59,9 @@ spec:
       name: GitHub Assistant
 
   tools:
+    builtins:
+      - shell
+      - file_operations
     gateways:
       - github-app-tool
 

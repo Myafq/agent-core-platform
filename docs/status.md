@@ -46,6 +46,24 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
 
 ## Design validation completed
 
+- ARCH-005 makes Harness tool capabilities explicit manifest intent. `spec.tools`
+  now carries `builtins`, `gateways`, and `codeInterpreter`, and the module
+  concatenates the requested groups into `allowedTools`, keeping `["@disabled"]`
+  when a manifest requests nothing. This retires the coupling in which a Gateway
+  binding implicitly granted `@builtin/shell` and `@builtin/file_operations`:
+  AgentCore offers those tools in every session, so the allow-list entry is the
+  only thing withholding them, and an agent that wants a shell no longer has to
+  request GitHub tools to get one. `codeInterpreter` attaches the AWS-managed
+  Code Interpreter tool and the five session actions scoped to
+  `arn:aws:bedrock-agentcore:<region>:aws:code-interpreter/*`; the sandbox is
+  service-owned, so no customer code-interpreter resource is created and no
+  container image is required. Unknown built-in names fail in the binding before
+  backend use. github-assistant declares `builtins: [shell, file_operations]`
+  and its reviewed eleven-entry allow-list is byte-identical: on 2026-08-06 the
+  provider-backed plan reported "No changes", and 161 unit tests, spec/contract
+  validation, schema parsing, Terraform/Terragrunt formatting, and whitespace
+  checks passed. No AWS resource was created, changed, or destroyed.
+
 - ARCH-004 implements manifest-driven provisioning: one self-contained agent
   manifest per object, one runtime-parameterized entrypoint, and one stable
   remote state per manifest. `entrypoints/agents` validates the target's
@@ -307,7 +325,9 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   on 2026-07-25 passed init/validate. The operator applied the reviewed two
   in-place updates; post-apply `get-harness` reported `READY`, version 3, no
   tools/skills, `allowedTools: ["@disabled"]`, and the chat-only prompt. The
-  follow-up plan was no-change.
+  follow-up plan was no-change. The absence of code-interpreter code records
+  that task's scope; ARCH-005 later added it as a reviewed opt-in capability
+  that no deployed agent requests.
 - The active IAM Harness is version 20 and `READY`; it has one IAM GitHub
   Gateway tool and all eight deployed operations. A direct IAM
   Harness-to-Gateway repository-list invocation succeeded.

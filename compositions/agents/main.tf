@@ -13,6 +13,8 @@ module "harness" {
   max_tokens                            = var.max_tokens
   timeout_seconds                       = var.timeout_seconds
   gateway_arn                           = var.gateway_arn
+  allowed_builtin_tools                 = var.allowed_builtin_tools
+  enable_code_interpreter               = var.enable_code_interpreter
   github_credential_broker_function_arn = var.github_credential_broker_function_arn
   container_uri                         = var.container_uri
   container_repository_arn              = var.container_repository_arn

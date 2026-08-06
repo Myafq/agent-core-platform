@@ -18,6 +18,39 @@ locals {
     Agent       = var.name
     Description = var.description
   })
+
+  # allowedTools is assembled from requested capabilities, never from the
+  # presence of another capability. Each group stays an exact literal list so
+  # the reviewed surface is readable in the diff rather than computed.
+  builtin_tool_entries = [for builtin in var.allowed_builtin_tools : "@builtin/${builtin}"]
+
+  # The gateway's operation allow-list is a platform property: a manifest
+  # requests the gateway, never an individual operation.
+  gateway_tool_entries = var.gateway_arn == null ? [] : [
+    "@github-read/listRepositories",
+    "@github-read/getRepository",
+    "@github-read/getFile",
+    "@github-read/pullRepository",
+    "@github-read/createBranch",
+    "@github-read/putFile",
+    "@github-read/createPullRequest",
+    "@github-read/mergePullRequest",
+    "@github-read/createIssue",
+  ]
+
+  code_interpreter_tool_name    = "code-interpreter"
+  code_interpreter_tool_entries = var.enable_code_interpreter ? ["@${local.code_interpreter_tool_name}"] : []
+
+  requested_tools = concat(
+    local.builtin_tool_entries,
+    local.gateway_tool_entries,
+    local.code_interpreter_tool_entries,
+  )
+
+  # AgentCore requires a non-empty allow-list and treats an omitted
+  # allowedTools as "every tool", so an agent that requests nothing is denied
+  # explicitly rather than left open.
+  allowed_tools = length(local.requested_tools) == 0 ? ["@disabled"] : local.requested_tools
 }
 
 data "aws_caller_identity" "current" {}
@@ -161,6 +194,25 @@ data "aws_iam_policy_document" "execution" {
       resources = [statement.value]
     }
   }
+
+  # AWS-managed Code Interpreter sandbox. The account field is the literal
+  # "aws" because the default interpreter is service-owned; a customer-owned
+  # interpreter would be a distinct code-interpreter-custom resource.
+  dynamic "statement" {
+    for_each = var.enable_code_interpreter ? ["default"] : []
+
+    content {
+      sid = "AgentCoreCodeInterpreterDefault"
+      actions = [
+        "bedrock-agentcore:StartCodeInterpreterSession",
+        "bedrock-agentcore:StopCodeInterpreterSession",
+        "bedrock-agentcore:GetCodeInterpreterSession",
+        "bedrock-agentcore:ListCodeInterpreterSessions",
+        "bedrock-agentcore:InvokeCodeInterpreter",
+      ]
+      resources = ["arn:${data.aws_partition.current.partition}:bedrock-agentcore:${data.aws_region.current.region}:aws:code-interpreter/*"]
+    }
+  }
 }
 
 resource "aws_iam_role" "this" {
@@ -187,21 +239,7 @@ resource "aws_bedrockagentcore_harness" "this" {
   harness_name       = local.harness_name
   execution_role_arn = aws_iam_role.this.arn
 
-  # AgentCore requires a non-empty allow-list. Without the reviewed Gateway,
-  # default shell and file tools remain disabled.
-  allowed_tools = var.gateway_arn == null ? ["@disabled"] : [
-    "@builtin/shell",
-    "@builtin/file_operations",
-    "@github-read/listRepositories",
-    "@github-read/getRepository",
-    "@github-read/getFile",
-    "@github-read/pullRepository",
-    "@github-read/createBranch",
-    "@github-read/putFile",
-    "@github-read/createPullRequest",
-    "@github-read/mergePullRequest",
-    "@github-read/createIssue",
-  ]
+  allowed_tools = local.allowed_tools
 
   dynamic "tool" {
     for_each = var.gateway_arn == null ? [] : [var.gateway_arn]
@@ -219,6 +257,17 @@ resource "aws_bedrockagentcore_harness" "this" {
           }
         }
       }
+    }
+  }
+
+  # The AWS-managed sandbox needs no config block; a code_interpreter_arn would
+  # name a customer-owned interpreter instead.
+  dynamic "tool" {
+    for_each = var.enable_code_interpreter ? [local.code_interpreter_tool_name] : []
+
+    content {
+      type = "agentcore_code_interpreter"
+      name = tool.value
     }
   }
 

@@ -143,13 +143,14 @@ class AgentCoreHarnessChatOnlyTests(unittest.TestCase):
         self.assertIn("credential.useHttpPath=true", self.prompt)
 
     def test_execution_role_and_harness_have_no_unreviewed_capabilities(self) -> None:
+        # Code Interpreter is deliberately absent from this tuple: it is a
+        # reviewed, opt-in capability covered by test_harness_tool_allow_list.
         for forbidden in (
             "bedrock-mantle:",
             "GetResourceOauth2Token",
             "GetWorkloadAccessToken",
             "secretsmanager:GetSecretValue",
             "BrowserSession",
-            "CodeInterpreter",
             "authorizer_configuration",
             "custom_jwt_authorizer",
             "oauth",

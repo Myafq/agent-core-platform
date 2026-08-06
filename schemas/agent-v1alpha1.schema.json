@@ -108,6 +108,12 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "builtins": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {"enum": ["shell", "file_operations"]}
+            },
+            "codeInterpreter": {"type": "boolean"},
             "gateways": {
               "type": "array",
               "uniqueItems": true,

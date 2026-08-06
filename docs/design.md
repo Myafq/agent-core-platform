@@ -432,8 +432,23 @@ For the agent kind, the binding layer is `entrypoints/agents` and the
 composition is `compositions/agents`. The manifest owns the inline system
 prompt and deployment vocabulary: `spec.engine.container.image` is a
 digest-pinned private ECR URI from which the binding derives the repository
-ARN; `spec.tools.gateways` is a closed set of platform gateway names, where
-`github-app-tool` binds the platform Gateway and credential-broker outputs.
+ARN; `spec.tools` is a closed capability vocabulary. `gateways` names platform
+gateways, where `github-app-tool` binds the platform Gateway and
+credential-broker outputs; `builtins` names built-in Harness tools; and
+`codeInterpreter` attaches the AWS-managed Code Interpreter sandbox.
+
+Every capability group is independent. The Harness `allowedTools` list is the
+concatenation of what the manifest requests, and a manifest that requests
+nothing is denied with `["@disabled"]` rather than left open, because AgentCore
+treats an omitted `allowedTools` as every tool. In particular, built-in `shell`
+and `file_operations` are available in every AgentCore session by default, so
+their entry in the allow-list is the only thing keeping them from an agent that
+never asked for them. No capability may be reachable as a side effect of
+requesting another: an agent that wants a shell must not have to request a
+gateway, and an agent that requests a gateway receives exactly that gateway's
+reviewed operations. Code Interpreter is a sandbox with no repository access
+and needs no container image.
+
 The binding validates the complete manifest and canonical real path before
 backend/provider initialization. It currently supports only `dev/us-east-1`;
 other environment or region values fail before selecting state. The binding

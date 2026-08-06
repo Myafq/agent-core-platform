@@ -66,6 +66,18 @@ variable "gateway_arn" {
   nullable    = true
 }
 
+variable "allowed_builtin_tools" {
+  description = "Built-in Harness tools this agent may call. Empty allows none."
+  type        = list(string)
+  default     = []
+}
+
+variable "enable_code_interpreter" {
+  description = "Attach the AWS-managed AgentCore Code Interpreter sandbox to this agent."
+  type        = bool
+  default     = false
+}
+
 variable "github_credential_broker_function_arn" {
   description = "Optional broker Lambda the Harness may invoke to mint temporary GitHub App credentials."
   type        = string

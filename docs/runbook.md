@@ -198,12 +198,22 @@ MANIFEST_TARGET=agents/github-assistant/agent.yaml mise exec -- terragrunt plan
 The entrypoint is bound to `dev/us-east-1`; unsupported `ENVIRONMENT` or
 `AWS_REGION` values fail before backend use. It validates the manifest and its
 canonical path during configuration evaluation. The manifest declares its
-inline system prompt, digest-pinned container image
-(`spec.engine.container.image`) and gateway bindings (`spec.tools.gateways`;
-the only known value, `github-app-tool`, binds the platform Gateway and
-credential-broker outputs). The entrypoint injects everything else: backend
-and provider configuration, environment tags, and the `/mnt/workspace`
-session-storage default.
+inline system prompt, its optional digest-pinned container image
+(`spec.engine.container.image`), and its capabilities under `spec.tools`:
+
+- `gateways` — platform gateway names. The only known value,
+  `github-app-tool`, binds the platform Gateway and credential-broker outputs
+  and contributes that gateway's reviewed operations.
+- `builtins` — `shell` and/or `file_operations`. AgentCore offers these in
+  every session, so omitting them is what withholds them.
+- `codeInterpreter` — `true` attaches the AWS-managed Code Interpreter sandbox
+  and its scoped session permissions. It needs no container image and grants no
+  repository access.
+
+The groups are independent; `allowedTools` is their concatenation, and a
+manifest requesting no capability is denied with `["@disabled"]`. The
+entrypoint injects everything else: backend and provider configuration,
+environment tags, and the `/mnt/workspace` session-storage default.
 
 Migration record (2026-08-05): the github-assistant state was server-side
 copied from `dev/us-east-1/agents/github-assistant/terraform.tfstate`

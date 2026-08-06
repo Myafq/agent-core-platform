@@ -89,6 +89,21 @@ locals {
   guard_gateways = length(local.unknown_gateways) == 0 ? "ok" : file("ERROR: spec.tools.gateways in ${local.manifest_path} names unknown gateway(s): ${join(", ", local.unknown_gateways)}. Known gateways: ${join(", ", local.known_gateways)}.")
 
   use_github_app_tool = local.guard_gateways == "ok" && contains(local.requested_gateways, "github-app-tool")
+
+  # spec.tools.builtins: optional list of built-in Harness tools. AgentCore
+  # makes these available in every session, so the allow-list is what keeps an
+  # agent from holding a shell it never asked for.
+  requested_builtins = try(local.manifest.spec.tools.builtins, [])
+  known_builtins     = ["shell", "file_operations"]
+  unknown_builtins   = [for builtin in local.requested_builtins : builtin if !contains(local.known_builtins, builtin)]
+
+  guard_builtins = length(local.unknown_builtins) == 0 ? "ok" : file("ERROR: spec.tools.builtins in ${local.manifest_path} names unknown built-in tool(s): ${join(", ", local.unknown_builtins)}. Known built-ins: ${join(", ", local.known_builtins)}.")
+
+  allowed_builtin_tools = local.guard_builtins == "ok" ? local.requested_builtins : []
+
+  # spec.tools.codeInterpreter: optional AWS-managed sandbox for running code.
+  # It needs no container image and grants no repository access.
+  use_code_interpreter = try(local.manifest.spec.tools.codeInterpreter, false)
 }
 
 terraform {
@@ -161,6 +176,8 @@ inputs = {
   max_tokens                            = local.manifest.spec.limits.maxTokens
   timeout_seconds                       = local.manifest.spec.limits.timeoutSeconds
   gateway_arn                           = local.use_github_app_tool ? dependency.github_app_tool.outputs.gateway_arn : null
+  allowed_builtin_tools                 = local.allowed_builtin_tools
+  enable_code_interpreter               = local.use_code_interpreter
   github_credential_broker_function_arn = local.use_github_app_tool ? dependency.github_app_tool.outputs.credential_broker_function_arn : null
   container_uri                         = local.container_uri
   container_repository_arn              = local.container_repository_arn
