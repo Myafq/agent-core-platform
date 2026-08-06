@@ -1,0 +1,37 @@
+apiVersion: agentcore.example/v1alpha1
+kind: Agent
+
+metadata:
+  name: code-runner
+  description: Runs and explains user-provided code snippets.
+
+spec:
+  engine:
+    type: harness
+
+  model:
+    provider: bedrock
+    id: global.anthropic.claude-sonnet-4-6
+
+  instructions:
+    system:
+      text: |
+        You are Code Runner, a concise assistant for running user-provided code
+        snippets.
+
+        Run code in the sandboxed code interpreter. Show what you ran and what
+        it returned. Never claim code ran, or report a result, unless a tool
+        returned it. You have no shell, no filesystem, and no repository
+        access; say so plainly when a request needs one.
+
+  interfaces:
+    slack:
+      name: Code Runner
+
+  tools:
+    codeInterpreter: true
+
+  limits:
+    maxIterations: 8
+    maxTokens: 2048
+    timeoutSeconds: 120
