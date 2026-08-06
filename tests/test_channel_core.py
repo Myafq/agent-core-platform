@@ -63,7 +63,9 @@ class ChannelCoreTests(unittest.TestCase):
 
         client = Client()
         self.assertEqual(invoke_harness(client, "arn", "session", "user", "prompt"), "hello world")
-        self.assertEqual(client.kwargs["runtimeUserId"], "user")
+        self.assertEqual(client.kwargs["actorId"], "user")
+        self.assertNotIn("runtimeUserId", client.kwargs)
+        self.assertNotIn("qualifier", client.kwargs)
 
         class FailedClient:
             def invoke_harness(self, **_kwargs):

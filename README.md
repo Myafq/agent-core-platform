@@ -32,18 +32,17 @@ start a thread by DM or by mentioning an invited bot.
 Slack provisioning and per-agent credentials use path-scoped, Standard-tier SSM
 parameters; secret values never enter agent YAML or Terraform state.
 
-For the local `SLACK-002` phase, `main` merge authorizes only Slack manifest
-create/update and exact Slack SSM writes. Human installation approval and one
-per-app Socket Mode `connections:write` token remain required; each macOS
-adapter is launched manually. Shared HTTPS Events ingress is deferred to
-`SLACK-003`.
+For the local Slack phase, `main` merge authorizes only Slack manifest
+create/update and exact Slack SSM writes. Human installation approval remains
+required. The HTTPS Events migration is pending image publication, plan/apply,
+and Slack manifest reconciliation.
 
 ## Layout
 
 ```text
 agents/       portable agent specs and prompts
 clients/      CLI and channel adapters
-containers/   image definitions and the buildable-image manifest
+containers/   image definitions and containerized services
 contracts/    executable channel/tool contracts
 modules/      Terraform resource mechanics
 live/         Terragrunt environment composition
@@ -52,10 +51,10 @@ docs/         design, status, and runbook
 TASKS.md      dependency-ordered implementation plan
 ```
 
-Deployables are container images, including the broker Lambda. Images are
-declared once in `containers/manifest.json`; `scripts/containers.py` tags each
-one by a digest of its declared sources, builds only what changed, and resolves
-pushed tags to the immutable `@sha256:` URIs that Terragrunt pins.
+Deployables are ARM64 container images, including the broker Lambda.
+`docker-bake.hcl` declares every target. `mise run container:push` builds a
+clean committed revision, pushes it to ECR, and prints the immutable
+`@sha256:` URIs that Terragrunt pins.
 
 ## Requirements
 
@@ -63,6 +62,8 @@ pushed tags to the immutable `@sha256:` URIs that Terragrunt pins.
 - Terraform 1.15.8
 - Terragrunt 1.1.1
 - AWS CLI v2
+- Docker with Buildx
+- jq
 - Python 3.11+
 
 ## Bootstrap
@@ -87,7 +88,7 @@ python3 -m venv .venv
 .venv/bin/python -m unittest discover -s tests
 .venv/bin/python scripts/validate_spec.py agents/github-assistant/agent.yaml
 .venv/bin/python scripts/validate_contracts.py
-.venv/bin/python scripts/containers.py plan --no-registry
+mise run container:check
 mise exec -- terraform fmt -check -recursive modules
 mise exec -- terragrunt hcl fmt --check
 git diff --check

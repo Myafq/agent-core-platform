@@ -7,7 +7,7 @@ import json
 import os
 from typing import Any
 
-from services.github_tool.broker import BrokerConfig, BrokerError, GitHubBroker, PyJwtSigner, UrllibGitHubClient
+from .broker import BrokerConfig, BrokerError, GitHubBroker, PyJwtSigner, UrllibGitHubClient
 
 LOG = logging.getLogger(__name__)
 LOG.setLevel(os.getenv("LOG_LEVEL", "INFO"))

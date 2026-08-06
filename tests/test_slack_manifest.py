@@ -16,14 +16,15 @@ SAMPLE_SPEC = REPOSITORY_ROOT / "agents" / "github-assistant" / "agent.yaml"
 
 
 REDIRECT_URI = "https://callback.example/slack/oauth/callback"
+EVENTS_URL = "https://events.example/slack/events"
 
 
 class SlackManifestTests(unittest.TestCase):
     def setUp(self) -> None:
         self.spec = yaml.safe_load(SAMPLE_SPEC.read_text(encoding="utf-8"))
 
-    def test_renders_minimal_direct_message_socket_mode_manifest(self) -> None:
-        manifest = slack_manifest(self.spec, REDIRECT_URI)
+    def test_renders_events_manifest(self) -> None:
+        manifest = slack_manifest(self.spec, REDIRECT_URI, EVENTS_URL)
         self.assertEqual(manifest["display_information"]["name"], "GitHub Assistant")
         self.assertEqual(manifest["features"]["bot_user"]["display_name"], "github-assistant")
         self.assertEqual(
@@ -38,18 +39,22 @@ class SlackManifestTests(unittest.TestCase):
             manifest["settings"]["event_subscriptions"]["bot_events"],
             ["app_mention", "message.channels", "message.groups", "message.im"],
         )
-        self.assertTrue(manifest["settings"]["socket_mode_enabled"])
-        self.assertNotIn("request_url", manifest["settings"]["event_subscriptions"])
+        self.assertEqual(manifest["settings"]["event_subscriptions"]["request_url"], EVENTS_URL)
+        self.assertNotIn("socket_mode_enabled", manifest["settings"])
 
     def test_requires_explicit_slack_name(self) -> None:
         spec = copy.deepcopy(self.spec)
         del spec["spec"]["interfaces"]["slack"]
         with self.assertRaisesRegex(ValueError, "spec.interfaces.slack.name"):
-            slack_manifest(spec, REDIRECT_URI)
+            slack_manifest(spec, REDIRECT_URI, EVENTS_URL)
 
     def test_requires_an_https_redirect_uri(self) -> None:
         with self.assertRaisesRegex(ValueError, "redirect_uri"):
-            slack_manifest(self.spec, "http://callback.example/slack/oauth/callback")
+            slack_manifest(self.spec, "http://callback.example/slack/oauth/callback", EVENTS_URL)
+
+    def test_requires_an_https_events_url(self) -> None:
+        with self.assertRaisesRegex(ValueError, "events_url"):
+            slack_manifest(self.spec, REDIRECT_URI, "http://events.example/slack/events")
 
 
 if __name__ == "__main__":

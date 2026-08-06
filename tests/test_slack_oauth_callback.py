@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+import sys
 import unittest
 from unittest.mock import patch
 
 from contracts.slack_oauth_state import sign_state
-from services.slack_oauth_callback.callback import (
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "containers" / "slack-oauth-callback" / "service"))
+
+from slack_oauth_callback.callback import (
     CallbackConfig,
     CallbackError,
     InstallationResult,
     complete_installation,
 )
-from services.slack_oauth_callback import handler as handler_module
+from slack_oauth_callback import handler as handler_module
 
 
 AGENT = "github-assistant"
@@ -269,6 +273,17 @@ class CompleteInstallationTests(unittest.TestCase):
             complete_installation({"code": "abc", "state": valid_state()}, parameters, FakeOAuth(success_response()), config())
         self.assertEqual(failure.exception.log_class, "credentials_corrupt")
 
+    def test_legacy_socket_token_is_removed_on_installation(self) -> None:
+        parameters = default_parameters()
+        parameters.values[CREDENTIALS_PATH] = json.dumps({**credentials(), "app_token": "legacy"})
+        complete_installation(
+            {"code": "abc", "state": valid_state()},
+            parameters,
+            FakeOAuth(success_response()),
+            config(),
+        )
+        self.assertNotIn("app_token", json.loads(parameters.values[CREDENTIALS_PATH]))
+
     def test_binding_with_an_invalid_app_id_is_rejected(self) -> None:
         parameters = default_parameters()
         parameters.values[BINDING_PATH] = json.dumps(binding(app_id="not-an-app-id"))
@@ -319,13 +334,13 @@ class HandlerTests(unittest.TestCase):
         )
         self._env_patch.start()
         self.addCleanup(self._env_patch.stop)
-        self._ssm_patch = patch("services.slack_oauth_callback.handler._ssm_client", return_value=object())
+        self._ssm_patch = patch("slack_oauth_callback.handler._ssm_client", return_value=object())
         self._ssm_patch.start()
         self.addCleanup(self._ssm_patch.stop)
 
     def test_success_renders_a_minimal_html_page_without_secrets(self) -> None:
         result = InstallationResult(AGENT, WORKSPACE, APP_ID, "U0BOTUSER", ("chat:write",), "2026-08-04T12:00:00Z")
-        with patch("services.slack_oauth_callback.handler.complete_installation", return_value=result):
+        with patch("slack_oauth_callback.handler.complete_installation", return_value=result):
             response = handler_module.lambda_handler({"queryStringParameters": {"code": "c", "state": "s"}}, self.FakeContext())
         self.assertEqual(response["statusCode"], 200)
         self.assertIn("text/html", response["headers"]["Content-Type"])
@@ -335,7 +350,7 @@ class HandlerTests(unittest.TestCase):
 
     def test_callback_error_renders_the_safe_message_and_correlation_id_at_400(self) -> None:
         with patch(
-            "services.slack_oauth_callback.handler.complete_installation",
+            "slack_oauth_callback.handler.complete_installation",
             side_effect=CallbackError("This installation link is invalid.", log_class="state_invalid"),
         ):
             response = handler_module.lambda_handler({"queryStringParameters": {"code": "c", "state": "s"}}, self.FakeContext())
@@ -344,7 +359,7 @@ class HandlerTests(unittest.TestCase):
         self.assertIn("req-123", response["body"])
 
     def test_unexpected_exception_renders_a_generic_500_without_leaking_details(self) -> None:
-        with patch("services.slack_oauth_callback.handler.complete_installation", side_effect=RuntimeError("boom with secret xoxb-leak")):
+        with patch("slack_oauth_callback.handler.complete_installation", side_effect=RuntimeError("boom with secret xoxb-leak")):
             response = handler_module.lambda_handler({"queryStringParameters": {"code": "c", "state": "s"}}, self.FakeContext())
         self.assertEqual(response["statusCode"], 500)
         self.assertNotIn("boom", response["body"])
@@ -353,17 +368,17 @@ class HandlerTests(unittest.TestCase):
     def test_success_and_failure_logging_never_contains_the_raw_query_or_secrets(self) -> None:
         result = InstallationResult(AGENT, WORKSPACE, APP_ID, "U0BOTUSER", ("chat:write",), "2026-08-04T12:00:00Z")
         query = {"code": "super-secret-authorization-code", "state": "super-secret-state-token"}
-        with self.assertLogs("services.slack_oauth_callback.handler", level="INFO") as captured:
-            with patch("services.slack_oauth_callback.handler.complete_installation", return_value=result):
+        with self.assertLogs("slack_oauth_callback.handler", level="INFO") as captured:
+            with patch("slack_oauth_callback.handler.complete_installation", return_value=result):
                 handler_module.lambda_handler({"queryStringParameters": query}, self.FakeContext())
         joined = "\n".join(captured.output)
         self.assertNotIn("super-secret-authorization-code", joined)
         self.assertNotIn("super-secret-state-token", joined)
         self.assertIn("result=success", joined)
 
-        with self.assertLogs("services.slack_oauth_callback.handler", level="WARNING") as captured:
+        with self.assertLogs("slack_oauth_callback.handler", level="WARNING") as captured:
             with patch(
-                "services.slack_oauth_callback.handler.complete_installation",
+                "slack_oauth_callback.handler.complete_installation",
                 side_effect=CallbackError("This installation link is invalid.", log_class="state_invalid"),
             ):
                 handler_module.lambda_handler({"queryStringParameters": query}, self.FakeContext())
@@ -374,7 +389,7 @@ class HandlerTests(unittest.TestCase):
 
     def test_non_dict_query_parameters_do_not_crash_the_handler(self) -> None:
         with patch(
-            "services.slack_oauth_callback.handler.complete_installation",
+            "slack_oauth_callback.handler.complete_installation",
             side_effect=CallbackError("This installation link is invalid or incomplete.", log_class="request_invalid"),
         ):
             response = handler_module.lambda_handler({}, self.FakeContext())

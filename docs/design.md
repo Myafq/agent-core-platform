@@ -9,7 +9,7 @@ AgentCore Gateway Lambda target.
 The first complete product slice is:
 
 ```text
-Telegram long polling or Slack Socket Mode
+Telegram long polling or Slack HTTPS Events
   -> trusted channel adapter
   -> IAM/SigV4 InvokeHarness
   -> AgentCore Harness
@@ -62,8 +62,8 @@ flowchart LR
 | Boundary | Authentication | Authorization |
 |---|---|---|
 | Telegram to adapter | Telegram Bot API over the bot-authenticated `getUpdates` channel | private chats and configured Telegram user allow-list |
-| Slack to adapter | pre-authenticated Socket Mode WebSocket | one configured workspace; every workspace user; DMs and threads opened by mentioning an invited bot |
-| Adapter to Harness | one narrowly scoped AWS IAM role using SigV4 | `InvokeHarness` on one Harness; `InvokeHarnessForUser` only if required by the final SDK/API shape |
+| Slack to adapter | HMAC-signed HTTPS Events request | per-agent route, signing secret, workspace ID, and App ID; DMs and threads opened by mentioning an invited bot |
+| Adapter to Harness | one narrowly scoped AWS IAM role using SigV4 | `bedrock-agentcore:InvokeAgentRuntime` on one exact Harness ARN; the SDK operation is `InvokeHarness` |
 | Harness to Gateway | Harness execution role | `InvokeGateway` on one Gateway and exact `allowedTools` |
 | Gateway to Lambda | Gateway service role | `lambda:InvokeFunction` on one qualified function ARN |
 | Lambda to GitHub | GitHub App JWT exchanged for an installation token | selected installation, repository allow-list, and exact App permissions |
@@ -133,180 +133,56 @@ The shared service owns:
 
 Adapters own only transport parsing, acknowledgement, and response delivery.
 
-Telegram remains private-chat long polling for development. Slack starts with
-Socket Mode because it needs no public request URL. Every Slack app represents
-exactly one agent. Every workspace user may open a session with a top-level DM
-or by mentioning an invited bot. The adapter replies in a thread, and the Slack
-channel plus root timestamp identify one Harness session. Channel follow-ups do
-not require another mention, so Slack must deliver `message.channels` and
-`message.groups`; the adapter ignores every message outside a root previously
-opened by `app_mention`. It persists only hashes of registered channel/thread
-IDs partitioned by workspace and Slack App ID, never message content or user
-IDs. Users invite bots to public or private channels; the platform requests no
-channel-management permission.
-
-### Slack provisioning and GitOps
-
-`SLACK-002` covers reconciliation and the local macOS operator contract only.
-`SLACK-003` remains deferred: no shared HTTPS Events ingress is part of this
-slice. The existing macOS host uses one manually invoked launcher per selected
-agent; the launcher replaces itself with that Socket Mode process.
-Reconciliation never starts, stops, or restarts adapter processes.
-
-App creation and update use Slack App Manifest APIs. A one-time bootstrap owns
-one workspace configuration token and its refresh token in SSM Parameter Store;
-the access token expires after 12 hours and must be rotated with
-`tooling.tokens.rotate`. The token belongs to one Slack user in one workspace,
-not one app, and can manage all apps that user owns in that workspace.
-
-Use Standard-tier parameters and keep every JSON value below 4 KB:
-
-| Parameter | Type | Contents |
-|---|---|---|
-| `/agent-core/slack/provisioner/config` | `SecureString` | Configuration access token and refresh token only. Updated together after every rotation. |
-| `/agent-core/slack/agents/<metadata.name>/binding` | `String` | Workspace ID, Slack App ID, manifest digest, installation state, and last successful reconcile time. The callback Lambda additionally records `bot_user_id` and `granted_scopes` here after a successful install; both are nonsecret audit fields. No secret values. |
-| `/agent-core/slack/agents/<metadata.name>/credentials` | `SecureString` | Client secret, signing secret, `state_signing_key` (generated locally at app creation; authenticates install-link state, never returned by Slack), bot token, and local-phase app token. Missing values remain absent, never empty placeholders. |
-
-Use the default `alias/aws/ssm` key for the cost-lean home-lab phase. IAM is the
-decryption boundary: the reconciler may read/write the provisioner path and all
-Slack agent paths; each adapter launcher may decrypt only its one credentials
-parameter and read its one binding. Do not load the provisioner parameter into
-the repository-wide mise environment. Fetch it only inside the reconciler and
-keep decrypted values in process memory.
-
-`metadata.name` is immutable once its binding exists. It is the SSM path and
-reconciliation identity. `spec.interfaces.slack.name` is mutable display intent
-and updates the recorded app manifest; it never selects an app. A merge to
-`main` is standing authorization only for Slack manifest create/update and the
-exact SSM writes above. It does not authorize a Slack installation approval,
-creation of an app-level token, controller/adapter process actions, Terraform
-apply, or a live Harness invocation.
-
-For a new agent spec merged to `main`, the reconciler:
-
-1. validates the YAML and renders the exact Slack manifest, including the
-   platform callback URL as the sole `oauth_config.redirect_urls` entry;
-2. creates the app with `apps.manifest.create`, or updates its recorded App ID;
-3. stores the returned client secret and signing secret, plus a freshly
-   generated `state_signing_key`, in the agent's SSM `SecureString` parameter;
-4. builds and emits a Slack `oauth/v2/authorize` install URL carrying the
-   platform `redirect_uri` and a signed, expiring `state` (see below) as an
-   approval action; `clients/slack/reconcile.py install-url` can mint a fresh
-   one later without any Slack or SSM write, if the first link expires before
-   a human clicks it;
-5. waits for a human workspace installation approval; Slack then redirects
-   the browser to the public callback, which exchanges the code and stores
-   the app-specific bot token itself (below) — reconciliation performs no
-   further action for this step;
-6. waits for one human-created, app-specific `connections:write` token and
-   writes it to the same `SecureString`.
-
-### Public Slack OAuth installation callback
-
-Socket Mode remains the only channel for runtime events; it needs no public
-request URL. The one exception is completing app installation itself: Slack
-redirects the installing user's browser to a fixed `redirect_uri` with a
-temporary `code`, and that redirect must reach something the internet can
-resolve. `services/slack_oauth_callback` is a single-purpose Lambda behind an
-HTTP API Gateway that exists only to complete `GET /slack/oauth/callback`; it
-is the only public HTTP ingress in the Slack slice, and adding any other
-public route (in particular a permanent Slack Events API endpoint) is out of
-scope here and remains gated behind `SLACK-003`.
+Telegram remains private-chat long polling for development. Slack uses signed
+HTTPS Events. Each Slack App represents one agent and receives an app-specific
+request URL on the shared API Gateway: `POST /slack/events/<metadata.name>`.
+The path selects the signing secret before the body is trusted; HMAC validation,
+the five-minute timestamp window, workspace ID, and App ID must all pass before
+the event is queued.
 
 ```mermaid
 flowchart LR
-  B["Installing user's browser"] -->|"GET /slack/oauth/callback?code&state"| G["API Gateway (HTTP API)"]
-  G --> L["slack-oauth-callback Lambda"]
-  L -->|"POST oauth.v2.access, exact redirect_uri"| SL["slack.com"]
-  L -->|"read client_id/client_secret/state_signing_key\nwrite bot_token, installation_state"| P["SSM /agent-core/slack/agents/<name>/*"]
+  S["Slack"] -->|"signed POST /slack/events/<agent>"| G["HTTP API Gateway"]
+  G --> I["events ingress Lambda"]
+  I -->|"verified normalized event"| Q["FIFO SQS"]
+  Q --> W["events worker Lambda"]
+  W --> H["IAM/SigV4 Harness"]
+  W -->|"threaded reply"| S
+  W --> D["DynamoDB hashed event/thread/session state"]
 ```
 
-State is a compact HMAC-SHA256 token (`contracts/slack_oauth_state.py`)
-binding the agent name, workspace ID, Slack App ID, redirect URI, and a short
-expiry (default 10 minutes). The install-URL generator signs it with the
-target agent's own `state_signing_key`; the callback verifies it the same
-way an unverified JWT `kid` is used — it reads the *claimed* agent name from
-the token only to select which agent's key to check the signature against,
-then rejects the request outright if that signature does not verify. A
-forged or replayed token for a different agent, workspace, App, or redirect
-URI fails closed before any Slack call or SSM write. The callback also
-requires `oauth.v2.access` to report `ok: true`, a bot access token, the
-same workspace ID the state named (which must equal the platform's
-configured `SLACK_WORKSPACE_ID`, `T0BKR092ATB` for the deployed workspace),
-and — when Slack includes it — the same App ID recorded in the binding; any
-mismatch fails closed without writing SSM. Because a duplicated or replayed
-callback either reuses an already-consumed authorization code (Slack itself
-rejects the second exchange) or an expired/tampered state, no SSM write ever
-happens for a request that is not a genuinely new, first-use installation
-completion, so retries cannot corrupt a good installation.
+Ingress returns the signed `url_verification` challenge synchronously. Normal
+events are acknowledged only after FIFO enqueue, keeping the public request
+under Slack's three-second limit. Queue groups are hashed App/channel/root
+identifiers; `event_id` is the dedupe key. The worker stores no message text,
+Slack IDs, or user IDs in DynamoDB: only hashed event, registered-thread, and
+active-session keys with event TTLs. Durable session overrides preserve `/new`
+across Lambda invocations. DMs start sessions directly; channel replies are
+accepted only for roots opened by `app_mention`.
 
-The Lambda extends the existing per-agent SSM schema rather than introducing
-a new credential model: it reads and writes exactly the same
-`/agent-core/slack/agents/<name>/{binding,credentials}` pair that
-`clients/slack/reconciliation.py` and `clients/slack/launcher.py` already
-own, using the same `SecureString`/`alias/aws/ssm` conventions. Its IAM role
-is narrowly scoped to `ssm:GetParameter`/`ssm:PutParameter` on only the
-`.../binding` and `.../credentials` paths under the agents prefix (never the
-provisioner configuration path) plus `kms:Decrypt`/`kms:Encrypt`/`kms:GenerateDataKey` on
-that same key, and CloudWatch Logs write access. It never logs the raw query
-string, state token, authorization code, client secret, signing secret,
-state signing key, or bot token — only a fixed error classification, plus,
-on success, the agent name, App ID, bot user ID, and scope count. It returns
-minimal HTML with no token or Slack API payload; a failure page carries only
-a safe message and a correlation ID (the Lambda request ID) an operator can
-correlate against CloudWatch, never the cause in raw form.
+The OAuth callback remains a separate Lambda and IAM role on
+`GET /slack/oauth/callback`. Its compact signed state binds agent, workspace,
+App, redirect URI, and expiry before code exchange or SSM writes. OAuth and
+Events share the API Gateway and per-agent SSM schema, not execution roles.
 
-Required deployment order, to avoid a chicken-and-egg between the platform
-callback and the Slack app configuration that depends on its URL:
+| Parameter | Type | Contents |
+|---|---|---|
+| `/agent-core/slack/provisioner/config` | `SecureString` | Manifest configuration token and refresh token. |
+| `/agent-core/slack/agents/<name>/binding` | `String` | Agent, workspace, App, manifest digest, install state, bot user ID, granted scopes. |
+| `/agent-core/slack/agents/<name>/credentials` | `SecureString` | Client secret, signing secret, state-signing key, bot token. No Socket Mode app token. |
 
-1. deploy the callback Lambda/API Gateway (`platform/slack-oauth-callback`);
-2. read its stable `callback_url` Terraform output;
-3. render/apply the Slack manifest with that URL as `--redirect-uri`
-   (`clients/slack/reconcile.py apply`), so the App's registered
-   `oauth_config.redirect_urls` matches exactly what the Lambda expects;
-4. generate a signed installation URL for that same `--redirect-uri`
-   (`clients/slack/reconcile.py install-url`);
-5. a human opens that URL and approves installation in the target
-   workspace;
-6. Slack redirects to the callback, which exchanges the code and persists
-   the installation.
+`metadata.name` is the immutable route, SSM path, and reconciliation identity;
+`spec.interfaces.slack.name` is display intent only. The reconciler renders both
+the OAuth redirect URI and Events request URL. A successful migration update
+removes the legacy app token from the credentials value. A merge authorizes only
+Slack manifest create/update and exact SSM writes; installation approval,
+Terraform apply, image push, and live invocation remain separate gates.
 
-Rollback means removing the API Gateway route or reverting to the prior
-validated Lambda version; it does not require deleting the Slack App,
-installation, or any SSM parameter. Because state signing keys are per agent,
-disabling one agent's callback path (or rotating its `state_signing_key`,
-which invalidates only its own outstanding install links) never affects
-another agent's installation flow.
-
-The adapter launcher remains a manual macOS operator action. It loads only the
-named agent binding and credentials into ephemeral child-process environment
-values; it does not receive the provisioner parameter.
-
-The reconcile key is workspace ID plus `metadata.name`, not the mutable Slack
-display name. The SSM binding records the returned Slack App ID, manifest digest,
-and installation state. Reconciliation must update that App ID and must never
-call create again merely because a run was retried. If app creation succeeds but
-binding persistence does not, stop. A later run may proceed only after explicit
-adoption supplies that exact Slack App ID for the same workspace; it must not
-guess by display name, search for a likely app, or create a duplicate.
-
-Removing an agent from source never deletes, disables, revokes, or otherwise
-changes its Slack app, installation, SSM parameters, or running process. It
-records an operator-review item only. Any failed reconciliation preserves the
-previous binding and credentials and does not act on currently running adapter
-processes. Because Slack and SSM cannot commit atomically, failures after a
-successful external mutation require operator inspection before retry.
-
-The configuration token cannot approve installation. Slack's documented Socket
-Mode setup still treats creation of the app-level token as an app-specific step,
-so separate Socket Mode apps are mostly automated, not unattended. The approval
-record owns the Slack App ID, workspace ID, installer, manifest digest, and UTC
-time; it never records token values.
-
-`SLACK-003`, if later authorized, may replace Socket Mode with one shared HTTPS
-Events ingress. Each agent would retain a separate Slack App and bot identity,
-but the scope, migration, and validation are intentionally not part of
-`SLACK-002`.
+Deploy in this order: publish the immutable ARM64 Events image; compose and
+apply ingress, queue, worker, state table, and routes; read the per-agent
+`events_url` output; then reconcile the Slack manifest with matching
+`--redirect-uri` and `--events-url`. This order keeps signed URL verification
+available before Socket Mode is removed from the external Slack App.
 
 ### Harness
 
@@ -400,16 +276,12 @@ repository content to Harness; never copy that content into diagnostics.
 Every deployable artifact is a container image. The broker Lambda uses
 `package_type = "Image"`; there is no zip packaging path.
 
-`containers/manifest.json` owns the buildable set. Terraform derives ECR
-repositories from it and `scripts/containers.py` derives builds from it, so a
-new image is declared once. Images are `arm64`.
+`docker-bake.hcl` owns the buildable set. Each target declares its Dockerfile,
+context, image repository, and `linux/arm64` platform once.
 
-Identity is the source digest, not a version string. Each container's tag is a
-hash of the working-tree bytes of its tracked `sources` files plus its build
-configuration. The same source always produces the same tag, so "has this
-changed" is answered without a registry query, and "is it already published"
-is one immutable-tag lookup. This is what lets a pipeline build only what
-changed.
+Images are built only from a clean committed revision and tagged with its full
+Git commit ID. The ECR repositories have immutable tags; Buildx returns the
+published digest through its metadata file.
 
 Terraform consumes `@sha256:` digests, never tags. The `image_uri` variable
 rejects anything that is not a full 64-hex digest, so a mutable reference
@@ -549,7 +421,8 @@ Reviewed 2026-07-24 against:
 - AWS inbound/outbound identity: <https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-oauth.html>
 - GitHub App authentication: <https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/about-authentication-with-a-github-app>
 - GitHub App permission selection: <https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app>
-- Slack Socket Mode: <https://docs.slack.dev/apis/events-api/using-socket-mode/>
+- Slack Events API: <https://docs.slack.dev/apis/events-api/>
+- Slack request verification: <https://docs.slack.dev/authentication/verifying-requests-from-slack/>
 - Telegram Bot API: <https://core.telegram.org/bots/api>
 
 Provider 6.55.0 source validation already demonstrated Harness and Gateway
@@ -572,5 +445,5 @@ validation task before implementation is called ready.
 11. Direct Harness GitHub tokens are a temporary home-lab risk acceptance.
     Keep the App private key Lambda-only and replace token delivery with a
     bounded server-side broker before production use.
-12. Deployable artifacts are container images identified by a source digest,
+12. Deployable artifacts are ARM64 container images built from a clean commit,
     and deployments pin image digests, never tags.

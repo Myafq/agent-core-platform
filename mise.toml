@@ -10,3 +10,49 @@ GITHUB_APP_ID = "4394936"
 GITHUB_APP_INSTALLATION_ID = "149043153"
 GITHUB_APP_PRIVATE_KEY_SECRET_ARN = "arn:aws:secretsmanager:us-east-1:803629127460:secret:/gh-app/private-key-ET4rqz"
 GITHUB_APP_PRIVATE_KEY_SECRET_KEY = "agent.pem"
+
+[tasks."container:check"]
+description = "Validate the ARM64 Docker Buildx Bake graph without building"
+run = "docker buildx bake --file docker-bake.hcl --print"
+
+[tasks."container:build"]
+description = "Build ARM64 images locally (TARGET defaults to all targets)"
+run = "docker buildx bake --file docker-bake.hcl --load ${TARGET:-default}"
+
+[tasks."container:push"]
+description = "Build and push committed ARM64 images, then print immutable image URIs"
+run = '''
+set -euo pipefail
+
+if [ -n "$(git status --porcelain)" ]; then
+  echo "container:push requires a clean committed working tree" >&2
+  exit 1
+fi
+
+: "${AWS_REGION:=us-east-1}"
+: "${TARGET:=default}"
+account="$(aws sts get-caller-identity --query Account --output text)"
+registry="${CONTAINER_REGISTRY:-${account}.dkr.ecr.${AWS_REGION}.amazonaws.com}"
+tag="git-$(git rev-parse HEAD)"
+metadata_file="$(mktemp "${TMPDIR:-/tmp}/agent-core-bake.XXXXXX.json")"
+trap 'rm -f "$metadata_file"' EXIT
+
+aws ecr get-login-password --region "$AWS_REGION" |
+  docker login --username AWS --password-stdin "$registry"
+REGISTRY="$registry" TAG="$tag" docker buildx bake --file docker-bake.hcl \
+  --push --provenance=false --metadata-file "$metadata_file" "$TARGET"
+
+jq -r --arg registry "$registry" '
+  to_entries[]
+  | select(.value["containerimage.digest"] != null)
+  | .key as $target
+  | .value["containerimage.digest"] as $digest
+  | {
+      "github-tool": "github-tool",
+      "slack-oauth-callback": "slack-oauth-callback",
+      "slack-events": "slack-events",
+      "harness-coding": "github-app-tool-coding"
+    }[$target] as $repository
+  | "\($target)\t\($registry)/\($repository)@\($digest)"
+' "$metadata_file"
+'''

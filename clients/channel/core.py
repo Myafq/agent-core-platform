@@ -93,9 +93,8 @@ def invoke_harness(client: Any, harness_arn: str, session_id: str, user_id: str,
     """Invoke an IAM-authorized Harness and return only text deltas."""
     response = client.invoke_harness(
         harnessArn=harness_arn,
-        qualifier="DEFAULT",
         runtimeSessionId=session_id,
-        runtimeUserId=user_id,
+        actorId=user_id,
         messages=[{"role": "user", "content": [{"text": text}]}],
     )
     chunks: list[str] = []

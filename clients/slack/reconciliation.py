@@ -1,9 +1,4 @@
-"""Secret-safe Slack App manifest reconciliation primitives.
-
-This module owns durable Slack provisioning state.  Socket Mode transport stays
-in :mod:`clients.slack.bot`; callers inject AWS SSM and Slack API clients here
-so reconciliation is testable without either service.
-"""
+"""Secret-safe Slack App manifest reconciliation primitives."""
 
 from __future__ import annotations
 
@@ -24,7 +19,8 @@ SSM_KEY_ID = "alias/aws/ssm"
 SSM_STANDARD_VALUE_BYTES = 4096
 STATE_SIGNING_KEY_BYTES = 32
 _APP_ID = re.compile(r"A[A-Z0-9]+$")
-_CREDENTIAL_KEYS = frozenset({"client_id", "client_secret", "signing_secret", "state_signing_key", "bot_token", "app_token"})
+_CREDENTIAL_KEYS = frozenset({"client_id", "client_secret", "signing_secret", "state_signing_key", "bot_token"})
+_LEGACY_CREDENTIAL_KEYS = frozenset({"app_token"})
 
 
 class ReconciliationError(RuntimeError):
@@ -68,6 +64,8 @@ class Binding:
     manifest_digest: str
     installation_state: str
     last_successful_reconcile_at: str
+    bot_user_id: str | None = None
+    granted_scopes: str | None = None
 
     @classmethod
     def from_json(cls, raw: str) -> "Binding":
@@ -82,10 +80,16 @@ class Binding:
             raise AdoptionRequired("Slack binding is corrupt; provide --adopt-app-id with the exact App ID.")
         if not _APP_ID.fullmatch(value["app_id"]):
             raise AdoptionRequired("Slack binding is corrupt; provide --adopt-app-id with the exact App ID.")
-        return cls(**{field: value[field] for field in fields})
+        optional = {}
+        for field in ("bot_user_id", "granted_scopes"):
+            if field in value:
+                if not isinstance(value[field], str) or not value[field]:
+                    raise AdoptionRequired("Slack binding is corrupt; provide --adopt-app-id with the exact App ID.")
+                optional[field] = value[field]
+        return cls(**{field: value[field] for field in fields}, **optional)
 
     def as_json(self) -> dict[str, str]:
-        return {
+        value = {
             "agent_name": self.agent_name,
             "workspace_id": self.workspace_id,
             "app_id": self.app_id,
@@ -93,6 +97,11 @@ class Binding:
             "installation_state": self.installation_state,
             "last_successful_reconcile_at": self.last_successful_reconcile_at,
         }
+        if self.bot_user_id:
+            value["bot_user_id"] = self.bot_user_id
+        if self.granted_scopes:
+            value["granted_scopes"] = self.granted_scopes
+        return value
 
 
 @dataclass(frozen=True)
@@ -300,12 +309,13 @@ class SlackReconciler:
         workspace_id: str,
         paths: ParameterPaths,
         redirect_uri: str,
+        events_url: str,
         *,
         adopt_app_id: str | None = None,
-    ) -> ReconcilePlan:
+    ) -> ReconcileResult:
         if not workspace_id:
             raise ReconciliationError("Slack workspace ID is required.")
-        manifest = slack_manifest(dict(spec), redirect_uri)
+        manifest = slack_manifest(dict(spec), redirect_uri, events_url)
         agent_name = _agent_name(spec)
         digest = manifest_digest(manifest)
         binding_raw = self.parameters.get(paths.binding, decrypt=False)
@@ -340,10 +350,11 @@ class SlackReconciler:
         workspace_id: str,
         paths: ParameterPaths,
         redirect_uri: str,
+        events_url: str,
         *,
         adopt_app_id: str | None = None,
-    ) -> ReconcileResult:
-        plan = self.plan(spec, workspace_id, paths, redirect_uri, adopt_app_id=adopt_app_id)
+    ) -> ReconcilePlan:
+        plan = self.plan(spec, workspace_id, paths, redirect_uri, events_url, adopt_app_id=adopt_app_id)
         if plan.action == "noop":
             return ReconcileResult(plan)
         slack = self._slack()
@@ -358,7 +369,8 @@ class SlackReconciler:
             raise ReconciliationError("Slack configuration token workspace does not match the requested workspace.")
         self.parameters.put_secure_json(paths.provisioner, {"token": configuration_token, "refresh_token": rotated_refresh_token})
 
-        manifest = slack_manifest(dict(spec), redirect_uri)
+        manifest = slack_manifest(dict(spec), redirect_uri, events_url)
+        preserved_binding: Binding | None = None
         if plan.action == "create":
             created = slack.create_manifest(configuration_token, manifest)
             app_id = _valid_app_id(_required(created, "app_id", "manifest creation"))
@@ -389,14 +401,16 @@ class SlackReconciler:
             install_url = _install_url(credentials["client_id"], manifest["oauth_config"]["scopes"]["bot"], redirect_uri, state)
         else:
             assert plan.app_id is not None
+            if plan.action == "update":
+                preserved_binding = self._binding(paths.binding, workspace_id)
             # Apps created before signed OAuth state was introduced already
             # have Slack client credentials but no locally generated state
             # key. Seed it before changing the manifest so the new callback is
             # usable as soon as the redirect URI takes effect. Preserve bot
-            # and app tokens when migrating an installed app.
-            credentials = self._credentials(
-                _json_object(self.parameters.get(paths.credentials, decrypt=True), "credentials")
-            )
+            # credentials when migrating an installed app.
+            raw_credentials = _json_object(self.parameters.get(paths.credentials, decrypt=True), "credentials")
+            legacy_credentials = set(raw_credentials).intersection(_LEGACY_CREDENTIAL_KEYS)
+            credentials = self._credentials({key: value for key, value in raw_credentials.items() if key not in legacy_credentials})
             state_signing_key = credentials.get("state_signing_key")
             if state_signing_key is None:
                 credentials["state_signing_key"] = secrets.token_hex(STATE_SIGNING_KEY_BYTES)
@@ -409,7 +423,19 @@ class SlackReconciler:
             elif len(state_signing_key) < 32:
                 raise ReconciliationError("Slack OAuth state signing key is invalid; the App manifest was not updated.")
             slack.update_manifest(configuration_token, plan.app_id, manifest)
-            result_plan = plan
+            if legacy_credentials:
+                try:
+                    self.parameters.put_secure_json(paths.credentials, credentials)
+                except Exception as error:
+                    raise ReconciliationError("Slack credentials were not sanitized after the App manifest update.") from error
+            result_plan = ReconcilePlan(
+                plan.action,
+                plan.agent_name,
+                plan.workspace_id,
+                plan.app_id,
+                plan.manifest_digest,
+                "installed" if "bot_token" in credentials else "approval_required",
+            )
             install_url = None
 
         binding = Binding(
@@ -419,6 +445,8 @@ class SlackReconciler:
             manifest_digest=result_plan.manifest_digest,
             installation_state=result_plan.installation_state,
             last_successful_reconcile_at=self.now(),
+            bot_user_id=preserved_binding.bot_user_id if preserved_binding else None,
+            granted_scopes=preserved_binding.granted_scopes if preserved_binding else None,
         )
         try:
             self.parameters.put_binding(paths.binding, binding.as_json())
@@ -434,6 +462,7 @@ class SlackReconciler:
         workspace_id: str,
         paths: ParameterPaths,
         redirect_uri: str,
+        events_url: str,
         *,
         ttl_seconds: int = DEFAULT_TTL_SECONDS,
     ) -> str:
@@ -444,7 +473,7 @@ class SlackReconciler:
         safe to re-run whenever the previous link expired before a human
         approved installation.
         """
-        manifest = slack_manifest(dict(spec), redirect_uri)
+        manifest = slack_manifest(dict(spec), redirect_uri, events_url)
         binding = self._binding(paths.binding, workspace_id)
         if binding.manifest_digest != manifest_digest(manifest):
             raise ReconciliationError("Slack manifest is not reconciled for this redirect_uri; run apply first.")
@@ -495,38 +524,14 @@ class SlackReconciler:
             manifest_digest=binding.manifest_digest,
             installation_state="installed",
             last_successful_reconcile_at=self.now(),
+            bot_user_id=response.get("bot_user_id") if isinstance(response.get("bot_user_id"), str) else binding.bot_user_id,
+            granted_scopes=response.get("scope") if isinstance(response.get("scope"), str) else binding.granted_scopes,
         )
         try:
             self.parameters.put_binding(paths.binding, installed.as_json())
         except Exception as error:
             raise ReconciliationError("Slack OAuth credentials were persisted but installation state was not updated; inspect SSM before another OAuth exchange.") from error
         return installed
-
-    def set_app_token(self, workspace_id: str, paths: ParameterPaths, app_token: str) -> Binding:
-        if not app_token:
-            raise ReconciliationError("Slack app token is required.")
-        binding = self._binding(paths.binding, workspace_id)
-        credentials = self._credentials(_json_object(self.parameters.get(paths.credentials, decrypt=True), "credentials"))
-        credentials["app_token"] = app_token
-        # Credentials are durable before the binding moves to Socket Mode ready.
-        # These two SSM parameters cannot be committed atomically.
-        try:
-            self.parameters.put_secure_json(paths.credentials, self._credentials(credentials))
-        except Exception as error:
-            raise ReconciliationError("Slack app token was not persisted; the current bot credential was preserved.") from error
-        ready = Binding(
-            agent_name=binding.agent_name,
-            workspace_id=binding.workspace_id,
-            app_id=binding.app_id,
-            manifest_digest=binding.manifest_digest,
-            installation_state="socket_mode_ready",
-            last_successful_reconcile_at=self.now(),
-        )
-        try:
-            self.parameters.put_binding(paths.binding, ready.as_json())
-        except Exception as error:
-            raise ReconciliationError("Slack app token was persisted but Socket Mode state was not updated; inspect SSM before starting the adapter.") from error
-        return ready
 
     def _binding(self, parameter: str, workspace_id: str) -> Binding:
         raw = self.parameters.get(parameter, decrypt=False)

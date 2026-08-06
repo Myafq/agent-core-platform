@@ -69,7 +69,7 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   webhooks; numeric App/installation IDs; a pre-existing private-key secret
   ARN; staged key rotation and rollback. No App, installation, secret, or
   cloud configuration was created or changed.
-- GHAPP-002 is implemented offline in `services/github_tool`: `listRepositories`
+- GHAPP-002 is implemented offline in `containers/github-tool/service/github_tool`: `listRepositories`
   reads the App installation's current selected repositories with a bounded
   installation-token request; additions/removals need no Lambda or Harness
   update. The two repository-read tools create per-request narrowed installation
@@ -178,7 +178,7 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
 
 ## Not verified
 
-- `SLACK-001` is complete offline. `spec.interfaces.slack.name` declares one
+- Historical `SLACK-001` Socket Mode proof passed. `spec.interfaces.slack.name` declared one
   Slack App and bot identity per agent. Every workspace user may start a session
   by DM or by mentioning an invited bot. Every root produces a Slack thread and
   one Harness session. Public/private channel follow-ups are accepted only for
@@ -190,24 +190,46 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   bounded plain-text threaded replies with unfurls disabled. On 2026-08-04 the
   operator confirmed both DM sessions and mention-started channel threads,
   including threaded follow-ups, work as expected through the live Harness.
-- `SLACK-002` is deployed and user-validated for one macOS host and workspace
+- Historical `SLACK-002` is deployed and was user-validated for one macOS host and workspace
   `T0BKR092ATB`. Reconciliation updated exact App `A0BMSFX33T5`; signed OAuth
   installed bot `U0BMVTXSYH1`; the per-app `connections:write` token was stored
-  in the agent's `SecureString`; and read-only verification found binding state
-  `socket_mode_ready`. The manually launched adapter connected successfully,
-  and the operator confirmed DM and channel-thread behavior. Controller and
-  adapter processes remain manual. No credential value was read or recorded.
+  in the agent's `SecureString`; and historical read-only verification found
+  binding state `socket_mode_ready`. The operator confirmed DM and
+  channel-thread behavior on that old path. No credential value was read or recorded.
+- `SLACK-003` now replaces Socket Mode with signed per-agent HTTPS
+  Events routes on the existing API Gateway, FIFO SQS dispatch, a separate
+  worker Lambda, and hashed DynamoDB event/thread/session state. The old bot,
+  launcher, app-token CLI, and tests are removed. The ARM64 image is pinned at
+  `sha256:f0dacf3770524d466daa480358165cb72d6a8dfaca780a846462f945305a56ee`.
+  The 2026-08-04 apply added 16 resources and replaced only the callback's
+  API-wide invoke permission with an exact GET permission. Slack App
+  `A0BMSFX33T5` accepted `POST /slack/events/github-assistant`; its binding is
+  `installed` and reconciliation is a no-op. Both Events Lambdas are ARM64,
+  `Active`, and `Successful`; Terraform reports no drift. The first live event
+  exposed a literal-route parsing defect (`agent_invalid`), then the worker
+  exposed stale SDK request fields (`qualifier`, `runtimeUserId`). The current
+  image extracts the agent from HTTP API `rawPath` and uses `actorId` for
+  Harness invocation. The next live event exposed a worker-role mismatch: the
+  SDK operation is `InvokeHarness`, but IAM authorizes it as
+  `bedrock-agentcore:InvokeAgentRuntime`. Source now grants that action on only
+  the configured Harness ARN. The IAM update is not yet applied, and post-fix
+  live invocation is not yet verified.
+- Container source is now co-located under each `containers/<name>/service`
+  tree. `docker-bake.hcl` replaces the deleted Python build framework. All
+  three ARM64 service images build and import locally. No refactored image was
+  pushed or pinned; do not apply the current handler-command plan against the
+  old Slack Events digest.
 - `SLACK-004` is deployed: the temporary
   `https://localhost/slack/oauth/callback` workflow is fully removed from
-  source and docs and replaced with `services/slack_oauth_callback`, a
+  source and docs and replaced with `containers/slack-oauth-callback`, a
   single-purpose Lambda behind `modules/slack-oauth-callback` (HTTP API
-  Gateway; the only public route is `GET /slack/oauth/callback`).
+  Gateway; its only currently deployed public route is `GET /slack/oauth/callback`).
   `contracts/slack_oauth_state.py` signs/verifies a compact, expiring,
   per-agent HMAC state; `clients/slack/reconciliation.py` now generates a
   `state_signing_key` per agent, threads an exact `redirect_uri` into
   `oauth.v2.access`, and adds a no-Slack/no-SSM-write `install-url` command;
-  `render_slack_manifest.py`, `reconcile.py`, and `launcher.py` all require an
-  explicit `--redirect-uri`. All 126 repository unit tests pass (27 new for
+  `render_slack_manifest.py` and `reconcile.py` require explicit callback and
+  Events URLs. All 126 repository unit tests passed at that deployment (27 new for
   the callback, 20 new for state signing), covering missing/malformed/
   expired/tampered state, workspace/App/bot-token mismatches, exact
   `redirect_uri` equality, canonical SSM paths and `SecureString` writes, and
@@ -275,10 +297,8 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
 
 ## Blockers
 
-- The Slack chat path has no current functional blocker. Its temporary
-  operating constraint is one manually launched Socket Mode process and one
-  per-app `connections:write` token; `SLACK-003` owns the shared HTTPS Events
-  ingress replacement.
+- Events control-plane rollout is complete. Live DM and mention-thread proof on
+  the new path remains.
 - The scoped GitHub platform and Harness plans applied. No GitHub App settings
   changed from this environment.
 - User-delegated GitHub remains blocked on a fixed and isolated Harness 3LO path
@@ -286,10 +306,9 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
 
 ## Next
 
-The user-prioritized Slack slice is live for DM and channel-thread chat.
-`SLACK-003` remains optional hardening: replace the manual per-app Socket Mode
-process/token with a shared HTTPS Events ingress. `CHAT-001` and `E2E-001`
-remain open because Telegram and Slack-to-GitHub proofs are separate gates.
+Next for Slack: run one DM and one mention-thread conversation through the new
+Events path, then revoke the obsolete Slack app-level Socket Mode token.
+`CHAT-001` and `E2E-001` remain separate gates.
 
 Next after PKG-001: the broker path is proven at the Lambda boundary only. A
 2026-08-04 Harness retry did not reach Gateway: `get-harness` showed v20
@@ -299,8 +318,8 @@ rejected `@github-read/listRepositories` as unavailable. The Lambda log showed
 no Gateway invocation for that retry. Diagnose this control-plane/runtime tool
 discrepancy separately; do not attribute it to the container Lambda, whose
 direct read-only invocation succeeded. PKG-002 (moving the coding-image
-repository into `container-registry`) and CI-001 (wiring `containers.py plan
---json` into a pipeline) remain open.
+repository into `container-registry`) and CI-001 (wiring Bake validation and
+authorized pushes into a pipeline) remain open.
 
 Next for the GitHub/Harness slice: review PR #1 and separately decide whether to
 retire the now-proven Gateway fallback. No PR merge, Gateway retirement, or

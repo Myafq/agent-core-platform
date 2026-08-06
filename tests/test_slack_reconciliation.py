@@ -25,6 +25,7 @@ ROOT = Path(__file__).parents[1]
 SPEC = yaml.safe_load((ROOT / "agents/github-assistant/agent.yaml").read_text(encoding="utf-8"))
 PATHS = ParameterPaths("/slack/provisioner", "/slack/agents/github-assistant/binding", "/slack/agents/github-assistant/credentials")
 REDIRECT_URI = "https://callback.example/slack/oauth/callback"
+EVENTS_URL = "https://events.example/slack/events"
 
 
 class FakeParameters:
@@ -85,7 +86,7 @@ class SlackReconciliationTests(unittest.TestCase):
 
     def test_plan_creates_first_binding_without_secrets(self) -> None:
         parameters = FakeParameters(initial_values())
-        plan = self.reconciler(parameters).plan(SPEC, "T1", PATHS, REDIRECT_URI)
+        plan = self.reconciler(parameters).plan(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL)
         self.assertEqual(plan.action, "create")
         self.assertIsNone(plan.app_id)
         self.assertNotIn("config-token-old", json.dumps(plan.safe_output()))
@@ -93,7 +94,7 @@ class SlackReconciliationTests(unittest.TestCase):
     def test_apply_creates_once_rotates_pair_and_emits_a_signed_install_url(self) -> None:
         parameters = FakeParameters(initial_values())
         slack = FakeSlack()
-        result = self.reconciler(parameters, slack).apply(SPEC, "T1", PATHS, REDIRECT_URI)
+        result = self.reconciler(parameters, slack).apply(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL)
 
         self.assertEqual(result.plan.action, "create")
         self.assertEqual(result.plan.app_id, "A123")
@@ -127,18 +128,49 @@ class SlackReconciliationTests(unittest.TestCase):
 
     def test_second_apply_updates_recorded_app_and_preserves_bot_credentials(self) -> None:
         values = initial_values()
-        values[PATHS.credentials] = json.dumps({"client_id": "client", "client_secret": "client-secret", "signing_secret": "signing-secret", "state_signing_key": "s" * 64, "bot_token": "bot", "app_token": "app"})
-        values[PATHS.binding] = json.dumps({"agent_name": "github-assistant", "workspace_id": "T1", "app_id": "A123", "manifest_digest": "old", "installation_state": "installed", "last_successful_reconcile_at": "2026-08-03T00:00:00Z"})
+        values[PATHS.credentials] = json.dumps({"client_id": "client", "client_secret": "client-secret", "signing_secret": "signing-secret", "state_signing_key": "s" * 64, "bot_token": "bot"})
+        values[PATHS.binding] = json.dumps({"agent_name": "github-assistant", "workspace_id": "T1", "app_id": "A123", "manifest_digest": "old", "installation_state": "installed", "last_successful_reconcile_at": "2026-08-03T00:00:00Z", "bot_user_id": "U123", "granted_scopes": "app_mentions:read,chat:write"})
         parameters = FakeParameters(values)
         slack = FakeSlack()
-        result = self.reconciler(parameters, slack).apply(SPEC, "T1", PATHS, REDIRECT_URI)
+        result = self.reconciler(parameters, slack).apply(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL)
 
         self.assertEqual(result.plan.action, "update")
         self.assertIsNone(result.install_url)
         self.assertEqual([call[0] for call in slack.calls], ["rotate", "update"])
         self.assertEqual(slack.calls[1][2], "A123")
         self.assertEqual(json.loads(parameters.values[PATHS.credentials])["bot_token"], "bot")
-        self.assertEqual(json.loads(parameters.values[PATHS.credentials])["app_token"], "app")
+        updated_binding = json.loads(parameters.values[PATHS.binding])
+        self.assertEqual(updated_binding["bot_user_id"], "U123")
+        self.assertEqual(updated_binding["granted_scopes"], "app_mentions:read,chat:write")
+
+    def test_manifest_update_removes_the_legacy_app_credential_and_marks_the_bot_installed(self) -> None:
+        values = initial_values()
+        legacy_key = "app_token"
+        values[PATHS.credentials] = json.dumps(
+            {
+                "client_id": "client",
+                "client_secret": "client-secret",
+                "signing_secret": "signing-secret",
+                "state_signing_key": "s" * 64,
+                "bot_token": "bot",
+                legacy_key: "legacy",
+            }
+        )
+        values[PATHS.binding] = json.dumps(
+            {
+                "agent_name": "github-assistant",
+                "workspace_id": "T1",
+                "app_id": "A123",
+                "manifest_digest": "old",
+                "installation_state": "legacy_ready",
+                "last_successful_reconcile_at": "2026-08-03T00:00:00Z",
+            }
+        )
+        parameters = FakeParameters(values)
+        result = self.reconciler(parameters, FakeSlack()).apply(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL)
+
+        self.assertEqual(result.plan.installation_state, "installed")
+        self.assertNotIn(legacy_key, json.loads(parameters.values[PATHS.credentials]))
 
     def test_update_migrates_existing_app_to_signed_oauth_state_before_manifest_change(self) -> None:
         values = initial_values()
@@ -148,7 +180,6 @@ class SlackReconciliationTests(unittest.TestCase):
                 "client_secret": "client-secret",
                 "signing_secret": "signing-secret",
                 "bot_token": "bot",
-                "app_token": "app",
             }
         )
         values[PATHS.binding] = json.dumps(
@@ -164,12 +195,11 @@ class SlackReconciliationTests(unittest.TestCase):
         parameters = FakeParameters(values)
         slack = FakeSlack()
 
-        self.reconciler(parameters, slack).apply(SPEC, "T1", PATHS, REDIRECT_URI)
+        self.reconciler(parameters, slack).apply(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL)
 
         credentials = json.loads(parameters.values[PATHS.credentials])
         self.assertEqual(len(credentials["state_signing_key"]), 64)
         self.assertEqual(credentials["bot_token"], "bot")
-        self.assertEqual(credentials["app_token"], "app")
         state_key_write = next(
             call for call in parameters.calls if call[0] == "put" and call[1] == PATHS.credentials
         )
@@ -180,13 +210,13 @@ class SlackReconciliationTests(unittest.TestCase):
     def test_identical_manifest_is_a_noop_without_decrypting_credentials_or_calling_slack(self) -> None:
         created_parameters = FakeParameters(initial_values())
         slack = FakeSlack()
-        created = self.reconciler(created_parameters, slack).apply(SPEC, "T1", PATHS, REDIRECT_URI)
+        created = self.reconciler(created_parameters, slack).apply(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL)
         values = dict(created_parameters.values)
         parameters = FakeParameters(values)
-        plan = self.reconciler(parameters).plan(SPEC, "T1", PATHS, REDIRECT_URI)
+        plan = self.reconciler(parameters).plan(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL)
         self.assertEqual(plan.action, "noop")
         self.assertEqual(parameters.reads, [(PATHS.binding, False), (PATHS.credentials, False)])
-        result = self.reconciler(parameters, slack).apply(SPEC, "T1", PATHS, REDIRECT_URI)
+        result = self.reconciler(parameters, slack).apply(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL)
         self.assertEqual(result.plan.action, "noop")
         self.assertEqual([call[0] for call in slack.calls], ["rotate", "create"])
 
@@ -195,8 +225,8 @@ class SlackReconciliationTests(unittest.TestCase):
         values[PATHS.credentials] = json.dumps({"client_id": "client", "client_secret": "client-secret", "signing_secret": "signing-secret"})
         parameters = FakeParameters(values)
         with self.assertRaises(AdoptionRequired):
-            self.reconciler(parameters).plan(SPEC, "T1", PATHS, REDIRECT_URI)
-        plan = self.reconciler(parameters).plan(SPEC, "T1", PATHS, REDIRECT_URI, adopt_app_id="A456")
+            self.reconciler(parameters).plan(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL)
+        plan = self.reconciler(parameters).plan(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL, adopt_app_id="A456")
         self.assertEqual(plan.action, "adopt")
         self.assertEqual(plan.app_id, "A456")
 
@@ -205,8 +235,8 @@ class SlackReconciliationTests(unittest.TestCase):
         values[PATHS.binding] = "not-json"
         parameters = FakeParameters(values)
         with self.assertRaises(AdoptionRequired):
-            self.reconciler(parameters).plan(SPEC, "T1", PATHS, REDIRECT_URI)
-        plan = self.reconciler(parameters).plan(SPEC, "T1", PATHS, REDIRECT_URI, adopt_app_id="A900")
+            self.reconciler(parameters).plan(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL)
+        plan = self.reconciler(parameters).plan(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL, adopt_app_id="A900")
         self.assertEqual((plan.action, plan.app_id), ("adopt", "A900"))
 
     def test_workspace_mismatch_allows_only_deliberate_exact_id_adoption(self) -> None:
@@ -214,15 +244,15 @@ class SlackReconciliationTests(unittest.TestCase):
         values[PATHS.binding] = json.dumps({"agent_name": "github-assistant", "workspace_id": "T2", "app_id": "A123", "manifest_digest": "old", "installation_state": "installed", "last_successful_reconcile_at": "2026-08-03T00:00:00Z"})
         parameters = FakeParameters(values)
         with self.assertRaises(AdoptionRequired):
-            self.reconciler(parameters).plan(SPEC, "T1", PATHS, REDIRECT_URI)
-        plan = self.reconciler(parameters).plan(SPEC, "T1", PATHS, REDIRECT_URI, adopt_app_id="A321")
+            self.reconciler(parameters).plan(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL)
+        plan = self.reconciler(parameters).plan(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL, adopt_app_id="A321")
         self.assertEqual((plan.action, plan.app_id), ("adopt", "A321"))
 
     def test_create_binding_failure_requires_adoption_and_never_retries_create(self) -> None:
         parameters = FakeParameters(initial_values(), fail_binding=True)
         slack = FakeSlack()
         with self.assertRaises(AdoptionRequired):
-            self.reconciler(parameters, slack).apply(SPEC, "T1", PATHS, REDIRECT_URI)
+            self.reconciler(parameters, slack).apply(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL)
         self.assertEqual([call[0] for call in slack.calls], ["rotate", "create"])
         self.assertIn(PATHS.credentials, parameters.values)
 
@@ -231,43 +261,32 @@ class SlackReconciliationTests(unittest.TestCase):
         values[PATHS.credentials] = json.dumps({"client_id": "client", "client_secret": "client-secret", "signing_secret": "signing-secret"})
         parameters = FakeParameters(values)
         slack = FakeSlack()
-        result = self.reconciler(parameters, slack).apply(SPEC, "T1", PATHS, REDIRECT_URI, adopt_app_id="A777")
+        result = self.reconciler(parameters, slack).apply(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL, adopt_app_id="A777")
         self.assertEqual(result.plan.action, "adopt")
         self.assertEqual(slack.calls[1][0:3], ("update", "config-token-new", "A777"))
         self.assertEqual(json.loads(parameters.values[PATHS.binding])["app_id"], "A777")
 
     def test_oauth_completion_updates_only_bot_credential_after_bound_identity_check(self) -> None:
         values = initial_values()
-        values[PATHS.credentials] = json.dumps({"client_id": "client", "client_secret": "client-secret", "signing_secret": "signing-secret", "app_token": "app"})
+        values[PATHS.credentials] = json.dumps({"client_id": "client", "client_secret": "client-secret", "signing_secret": "signing-secret"})
         values[PATHS.binding] = json.dumps({"agent_name": "github-assistant", "workspace_id": "T1", "app_id": "A123", "manifest_digest": "digest", "installation_state": "approval_required", "last_successful_reconcile_at": "2026-08-03T00:00:00Z"})
         parameters = FakeParameters(values)
         slack = FakeSlack()
         binding = self.reconciler(parameters, slack).complete_oauth("T1", PATHS, "oauth-code", REDIRECT_URI)
         self.assertEqual(binding.installation_state, "installed")
         self.assertEqual(json.loads(parameters.values[PATHS.credentials])["bot_token"], "bot-token")
-        self.assertEqual(json.loads(parameters.values[PATHS.credentials])["app_token"], "app")
         self.assertEqual(slack.calls[0], ("oauth", "client", "client-secret", "oauth-code", REDIRECT_URI))
-
-    def test_app_token_update_preserves_existing_credentials_without_api_call(self) -> None:
-        values = initial_values()
-        values[PATHS.credentials] = json.dumps({"client_id": "client", "client_secret": "client-secret", "signing_secret": "signing-secret", "bot_token": "bot"})
-        values[PATHS.binding] = json.dumps({"agent_name": "github-assistant", "workspace_id": "T1", "app_id": "A123", "manifest_digest": "digest", "installation_state": "installed", "last_successful_reconcile_at": "2026-08-03T00:00:00Z"})
-        parameters = FakeParameters(values)
-        binding = self.reconciler(parameters).set_app_token("T1", PATHS, "app-token")
-        self.assertEqual(binding.app_id, "A123")
-        self.assertEqual(binding.installation_state, "socket_mode_ready")
-        self.assertEqual(json.loads(parameters.values[PATHS.credentials])["app_token"], "app-token")
 
     def test_workspace_mismatch_and_token_response_mismatch_stop_before_manifest_mutation(self) -> None:
         parameters = FakeParameters(initial_values())
         slack = FakeSlack()
         slack.rotate_configuration_token = lambda _: {"token": "new", "refresh_token": "new-refresh", "team_id": "T2"}  # type: ignore[method-assign]
         with self.assertRaisesRegex(ReconciliationError, "workspace"):
-            self.reconciler(parameters, slack).apply(SPEC, "T1", PATHS, REDIRECT_URI)
+            self.reconciler(parameters, slack).apply(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL)
         self.assertEqual(len(slack.calls), 0)
 
     def test_no_token_field_names_are_written_to_safe_plan_output(self) -> None:
-        plan = self.reconciler(FakeParameters(initial_values())).plan(copy.deepcopy(SPEC), "T1", PATHS, REDIRECT_URI)
+        plan = self.reconciler(FakeParameters(initial_values())).plan(copy.deepcopy(SPEC), "T1", PATHS, REDIRECT_URI, EVENTS_URL)
         safe = json.dumps(plan.safe_output())
         self.assertNotIn("token", safe)
         self.assertNotIn("secret", safe)
@@ -285,13 +304,13 @@ class InstallationUrlTests(unittest.TestCase):
 
     def applied(self) -> tuple[FakeParameters, dict[str, str]]:
         parameters = FakeParameters(initial_values())
-        SlackReconciler(parameters, FakeSlack(), now=lambda: "2026-08-04T12:00:00Z").apply(SPEC, "T1", PATHS, REDIRECT_URI)
+        SlackReconciler(parameters, FakeSlack(), now=lambda: "2026-08-04T12:00:00Z").apply(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL)
         return parameters, json.loads(parameters.values[PATHS.credentials])
 
     def test_mints_a_fresh_url_without_any_slack_or_ssm_write(self) -> None:
         parameters, credentials = self.applied()
         writes_before = len(parameters.calls)
-        url = self.reconciler(parameters).installation_url(SPEC, "T1", PATHS, REDIRECT_URI)
+        url = self.reconciler(parameters).installation_url(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL)
         self.assertEqual(len(parameters.calls), writes_before + 2)  # binding + credentials reads only
         self.assertTrue(all(call[0] == "get" for call in parameters.calls[writes_before:]))
         parsed = urlparse(url)
@@ -302,19 +321,19 @@ class InstallationUrlTests(unittest.TestCase):
     def test_each_call_mints_a_distinct_state(self) -> None:
         parameters, _ = self.applied()
         reconciler = self.reconciler(parameters)
-        first = reconciler.installation_url(SPEC, "T1", PATHS, REDIRECT_URI)
-        second = reconciler.installation_url(SPEC, "T1", PATHS, REDIRECT_URI)
+        first = reconciler.installation_url(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL)
+        second = reconciler.installation_url(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL)
         self.assertNotEqual(first, second)
 
     def test_rejects_a_redirect_uri_that_was_never_reconciled(self) -> None:
         parameters, _ = self.applied()
         with self.assertRaisesRegex(ReconciliationError, "not reconciled"):
-            self.reconciler(parameters).installation_url(SPEC, "T1", PATHS, "https://different.example/callback")
+            self.reconciler(parameters).installation_url(SPEC, "T1", PATHS, "https://different.example/callback", EVENTS_URL)
 
     def test_requires_an_existing_binding(self) -> None:
         parameters = FakeParameters(initial_values())
         with self.assertRaises(AdoptionRequired):
-            self.reconciler(parameters).installation_url(SPEC, "T1", PATHS, REDIRECT_URI)
+            self.reconciler(parameters).installation_url(SPEC, "T1", PATHS, REDIRECT_URI, EVENTS_URL)
 
 
 if __name__ == "__main__":

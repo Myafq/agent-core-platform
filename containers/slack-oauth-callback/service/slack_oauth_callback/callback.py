@@ -1,10 +1,9 @@
 """Public Slack OAuth installation callback.
 
-This is the *only* public entrypoint in the Slack slice: Socket Mode owns
-runtime events, and this Lambda exists solely to complete `GET
-/slack/oauth/callback` after a human approves installation. It reads and
-writes the exact same per-agent SSM hierarchy that
-`clients.slack.reconciliation` and `clients.slack.launcher` already own
+This handler owns only `GET /slack/oauth/callback` after a human approves
+installation. Runtime events use the separate signed Events ingress on the
+same API Gateway. It reads and writes the exact same per-agent SSM hierarchy
+that `clients.slack.reconciliation` owns
 (`/agent-core/slack/agents/<name>/{binding,credentials}`) -- this module adds
 no new credential model, only a narrowly scoped public path to that existing
 schema. It is intentionally self-contained (stdlib plus the AWS-provided
@@ -33,7 +32,8 @@ from contracts.slack_oauth_state import StateError, unverified_agent_name, verif
 LOG = logging.getLogger(__name__)
 DEFAULT_BINDING_PREFIX = "/agent-core/slack/agents"
 SSM_KEY_ID = "alias/aws/ssm"
-_CREDENTIAL_KEYS = frozenset({"client_id", "client_secret", "signing_secret", "state_signing_key", "bot_token", "app_token"})
+_CREDENTIAL_KEYS = frozenset({"client_id", "client_secret", "signing_secret", "state_signing_key", "bot_token"})
+_LEGACY_APP_TOKEN_KEY = "app_token"
 _REQUIRED_BINDING_FIELDS = (
     "agent_name",
     "workspace_id",
@@ -190,9 +190,9 @@ def _parse_credentials(raw: str) -> dict[str, str]:
         raise CallbackError("This installation link is invalid.", log_class="credentials_corrupt") from error
     if not isinstance(value, dict) or not all(isinstance(key, str) and isinstance(item, str) and item for key, item in value.items()):
         raise CallbackError("This installation link is invalid.", log_class="credentials_corrupt")
-    if set(value) - _CREDENTIAL_KEYS:
+    if set(value) - _CREDENTIAL_KEYS - {_LEGACY_APP_TOKEN_KEY}:
         raise CallbackError("This installation link is invalid.", log_class="credentials_corrupt")
-    return value
+    return {key: item for key, item in value.items() if key != _LEGACY_APP_TOKEN_KEY}
 
 
 def complete_installation(

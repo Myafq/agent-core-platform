@@ -16,7 +16,7 @@ except ModuleNotFoundError:
     raise SystemExit(2) from None
 
 
-def slack_manifest(spec: dict[str, Any], redirect_uri: str) -> dict[str, Any]:
+def slack_manifest(spec: dict[str, Any], redirect_uri: str, events_url: str) -> dict[str, Any]:
     slack = spec.get("spec", {}).get("interfaces", {}).get("slack")
     if not isinstance(slack, dict) or not isinstance(slack.get("name"), str):
         raise ValueError("spec.interfaces.slack.name is required")
@@ -25,6 +25,8 @@ def slack_manifest(spec: dict[str, Any], redirect_uri: str) -> dict[str, Any]:
         raise ValueError("metadata.name is required")
     if not isinstance(redirect_uri, str) or not redirect_uri.startswith("https://"):
         raise ValueError("redirect_uri must be an https:// URL for the platform OAuth callback")
+    if not isinstance(events_url, str) or not events_url.startswith("https://"):
+        raise ValueError("events_url must be an https:// URL for the platform Slack Events endpoint")
     description = spec.get("metadata", {}).get("description")
     manifest: dict[str, Any] = {
         "_metadata": {"major_version": 1, "minor_version": 1},
@@ -45,10 +47,10 @@ def slack_manifest(spec: dict[str, Any], redirect_uri: str) -> dict[str, Any]:
         },
         "settings": {
             "event_subscriptions": {
+                "request_url": events_url,
                 "bot_events": ["app_mention", "message.channels", "message.groups", "message.im"]
             },
             "org_deploy_enabled": False,
-            "socket_mode_enabled": True,
             "is_hosted": False,
             "token_rotation_enabled": False,
         },
@@ -66,10 +68,15 @@ def main() -> int:
         required=True,
         help="Public platform OAuth callback URL, e.g. the slack-oauth-callback API Gateway invoke URL.",
     )
+    parser.add_argument(
+        "--events-url",
+        required=True,
+        help="Public platform Slack Events URL, e.g. the slack-events API Gateway invoke URL.",
+    )
     args = parser.parse_args()
     spec = yaml.safe_load(args.spec.read_text(encoding="utf-8"))
     try:
-        manifest = slack_manifest(spec, args.redirect_uri)
+        manifest = slack_manifest(spec, args.redirect_uri, args.events_url)
     except ValueError as error:
         print(error, file=sys.stderr)
         return 1

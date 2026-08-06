@@ -7,7 +7,7 @@ import logging
 import os
 from typing import Any
 
-from services.slack_oauth_callback.callback import (
+from slack_oauth_callback.callback import (
     CallbackConfig,
     CallbackError,
     SsmParameterStore,

@@ -24,22 +24,20 @@ python3 -m venv .venv
 .venv/bin/python -m unittest discover -s tests
 .venv/bin/python scripts/validate_spec.py agents/github-assistant/agent.yaml
 .venv/bin/python scripts/render_slack_manifest.py agents/github-assistant/agent.yaml \
-  --redirect-uri "$SLACK_OAUTH_CALLBACK_URL" >/tmp/github-assistant-slack-manifest.json
+  --redirect-uri "$SLACK_OAUTH_CALLBACK_URL" \
+  --events-url "https://example.invalid/slack/events/github-assistant" >/tmp/github-assistant-slack-manifest.json
 .venv/bin/python scripts/validate_contracts.py
-.venv/bin/python scripts/containers.py plan --no-registry
-python3 -m py_compile scripts/containers.py scripts/validate_spec.py scripts/render_slack_manifest.py clients/cli/chat.py clients/telegram/bot.py clients/slack/reconciliation.py clients/slack/reconcile.py clients/slack/launcher.py contracts/slack_oauth_state.py services/slack_oauth_callback/callback.py services/slack_oauth_callback/handler.py
+mise run container:check
+python3 -m py_compile scripts/validate_spec.py scripts/render_slack_manifest.py clients/cli/chat.py clients/telegram/bot.py clients/slack/reconciliation.py clients/slack/reconcile.py contracts/slack_oauth_state.py containers/github-tool/service/github_tool/broker.py containers/github-tool/service/github_tool/handler.py containers/slack-oauth-callback/service/slack_oauth_callback/callback.py containers/slack-oauth-callback/service/slack_oauth_callback/handler.py containers/slack-events/service/slack_events/core.py containers/slack-events/service/slack_events/ingress.py containers/slack-events/service/slack_events/worker.py
 python3 -m json.tool schemas/agent-v1alpha1.schema.json >/dev/null
 mise exec -- terraform fmt -check -recursive modules
 mise exec -- terragrunt hcl fmt --check
 git diff --check
 ```
 
-`render_slack_manifest.py` and every `clients/slack/reconcile.py` command that
-renders a manifest (`plan`, `apply`, `install-url`, `complete-oauth`) now
-require `--redirect-uri`: the platform's public OAuth callback URL. There is
-no built-in default and no localhost fallback; before `platform/slack-oauth-callback`
-is deployed, use any placeholder `https://` URL for offline validation only
-(it never reaches Slack or SSM in `plan`/dry validation).
+Manifest rendering commands require the exact public OAuth `--redirect-uri`
+and per-agent `--events-url`. Offline validation may use placeholder `https://`
+URLs; reconciliation must use Terraform outputs from the deployed shared API.
 
 `validate_contracts.py` checks the frozen channel and GitHub App tool fixtures.
 It permits only fixed read, branch, file-write, pull-request, merge, and issue
@@ -80,7 +78,6 @@ Channel secrets:
 ```shell
 export TELEGRAM_BOT_TOKEN=operator-supplied
 export SLACK_BOT_TOKEN=operator-supplied
-export SLACK_APP_TOKEN=operator-supplied
 ```
 
 Slack provisioning parameter names:
@@ -139,30 +136,24 @@ permissions, user tokens, or key material in Terraform.
 
 ## Container images
 
-`containers/manifest.json` is the single source of truth for every buildable
-image. Each entry declares its `repository`, `dockerfile`, `context`,
-`platform`, and the `sources` prefixes that affect it.
+`docker-bake.hcl` is the single build graph. Each target declares its image
+repository, Dockerfile, context, and `linux/arm64` platform.
 
-`scripts/containers.py` hashes the working-tree bytes of the tracked files
-under those prefixes, plus the build configuration, into a `src-<12 hex>` tag.
-ECR repositories use immutable tags, so an unchanged container is skipped
-rather than re-pushed. Uncommitted edits change the tag, so a local build
-always reflects what is on disk.
+Images are built from a clean committed revision. ECR tags are immutable;
+the push task uses the full commit ID as its tag and prints Buildx's resulting
+digest URI for Terragrunt.
 
 ```shell
-.venv/bin/python scripts/containers.py plan
-.venv/bin/python scripts/containers.py build --all --push
-.venv/bin/python scripts/containers.py digests --json
+mise run container:check
+TARGET=github-tool mise run container:build
+TARGET=github-tool mise run container:push
 ```
 
-`plan --no-registry` computes tags with no AWS call. `plan --json` is the
-change-detection gate for a future CI pipeline: build only entries whose
-`action` is `build`. `build` without `--push` loads the image locally and
-publishes nothing. Pushing is a mutation and needs its own authorization.
-
-`digests --json` emits, per container name, the immutable
-`<registry>/<repository>@sha256:<digest>` URI. That value — never a tag, never
-a hand-written digest — is what gets pinned into Terragrunt.
+`container:check` validates the build graph without building. `container:build`
+loads one target locally and publishes nothing. `container:push` logs into ECR,
+builds and pushes the selected target, then prints its immutable
+`<registry>/<repository>@sha256:<digest>` URI. Pushing is a mutation and needs
+its own authorization.
 
 ## Plan order
 
@@ -173,9 +164,9 @@ container image and `platform/container-registry` is deployed.
 
 To ship a broker code change, repeat this order:
 
-1. `scripts/containers.py plan` — confirm `github-tool` shows `build`.
-2. `scripts/containers.py build github-tool --push`.
-3. Put that container's `digests --json` `image_uri` into
+1. `mise run container:check` — confirm the `github-tool` target is ARM64.
+2. `TARGET=github-tool mise run container:push`.
+3. Put that command's `github-tool` URI into
    `live/dev/us-east-1/platform/github-app-tool/terragrunt.hcl`. A digest that
    was not produced by an actual push is never acceptable; `image_uri`
    validation rejects anything but a full 64-hex digest.
@@ -188,9 +179,8 @@ To ship a broker code change, repeat this order:
 5. After apply, confirm `State: Active`, `LastUpdateStatus: Successful`, and
    that `aws lambda get-policy` still contains `AgentCoreGatewayInvoke`.
 
-Because change detection reads tracked files only, `git add` new container
-sources before building; `containers.py` fails rather than tagging an empty
-source set.
+The push task rejects a dirty working tree; commit the intended image source
+before building. No hand-written digest is acceptable.
 
 Reject any plan that would destroy or recreate `aws_ecr_repository.harness_coding`
 (`github-app-tool-coding`). Deployed Harness v20 pins an immutable digest inside
@@ -315,44 +305,11 @@ or chat ID. Private chats and this configured user only. The adapter checks that
 no webhook is configured before it starts long polling; it does not remove a
 webhook. Use long polling, not a webhook.
 
-Slack:
-
-```shell
-export SLACK_BOT_TOKEN=operator-supplied
-export SLACK_APP_TOKEN=operator-supplied
-export SLACK_APP_ID=A01234567
-export SLACK_WORKSPACE_ID=T01234567
-
-.venv/bin/python clients/slack/bot.py \
-  --region "$AWS_REGION" \
-  --profile "$AWS_PROFILE" \
-  --app-id "$SLACK_APP_ID" \
-  --workspace-id "$SLACK_WORKSPACE_ID" \
-  --harness-arn "$(cd live/dev/us-east-1/agents/github-assistant && mise exec -- terragrunt output -raw harness_arn)"
-```
-
-Render the Slack app manifest from the agent declaration:
-
-```shell
-.venv/bin/python scripts/render_slack_manifest.py \
-  agents/github-assistant/agent.yaml \
-  --redirect-uri "$SLACK_OAUTH_CALLBACK_URL" > /tmp/github-assistant-slack-manifest.json
-```
-
-The manifest requests `app_mentions:read`, `channels:history`, `chat:write`,
-`groups:history`, and `im:history`; subscribes to `app_mention`,
-`message.channels`, `message.groups`, and `message.im`; and enables Socket Mode.
-History events are required only so replies in an agent-owned channel thread do
-not need to repeat the mention. The adapter ignores unthreaded channel messages
-and threads that were not opened by mentioning the bot. It stores registered
-channel/thread roots as workspace/App-partitioned hashes in `.slack-threads` and
-stores no message content.
-
 ## Slack OAuth callback deployment (SLACK-004)
 
-`platform/slack-oauth-callback` (Lambda + HTTP API Gateway,
-`modules/slack-oauth-callback`) is the one public HTTP ingress for the Slack
-slice: `GET /slack/oauth/callback` only. It must exist, with a known
+`platform/slack-oauth-callback` owns the shared HTTP API. The deployed slice
+currently exposes `GET /slack/oauth/callback`; source also defines gated
+per-agent Events routes and workers. The callback must exist, with a known
 `callback_url`, before the Slack manifest is rendered/applied for real,
 because the manifest's `oauth_config.redirect_urls` and every install link
 must carry that exact URL. Its image is already built and pinned; rebuild and
@@ -360,20 +317,19 @@ re-pin only if the service source changed, then plan (apply needs its own
 explicit authorization):
 
 ```shell
-.venv/bin/python scripts/containers.py plan
+mise run container:check
 cd live/dev/us-east-1/platform/slack-oauth-callback
 mise exec -- terragrunt plan
 ```
 
-Accept only the one Lambda, one HTTP API (`aws_apigatewayv2_api`), one route
-(`GET /slack/oauth/callback`), one `$default` auto-deploy stage, one Lambda
+For the callback-only composition, accept only one Lambda, one HTTP API,
+`GET /slack/oauth/callback`, one `$default` stage, and one Lambda
 execution role scoped to `ssm:GetParameter`/`ssm:PutParameter` on
 `/agent-core/slack/agents/*/{binding,credentials}` plus
 `kms:Decrypt`/`kms:Encrypt`/`kms:GenerateDataKey` on `alias/aws/ssm` and
 `logs:CreateLogStream`/`logs:PutLogEvents`, and two CloudWatch log groups
-(Lambda + API Gateway access logs). Reject anything broader — in particular,
-reject any route other than `GET /slack/oauth/callback` and any IAM
-statement reaching outside the `agents/*` SSM prefix.
+(Lambda + API Gateway access logs). Reject any callback IAM statement reaching
+outside the `agents/*` SSM prefix.
 
 ```shell
 mise exec -- terragrunt apply
@@ -390,12 +346,13 @@ token, code, or any secret. The API Gateway access log format
 (`modules/slack-oauth-callback/main.tf`) has no query-string field for the
 same reason.
 
-## Slack-002 operator sequence
+## Slack Events migration gate
 
-Scope: one existing macOS host, one Slack workspace, and manually launched
-per-agent Socket Mode processes. `SLACK-003` is deferred; do not introduce an
-HTTPS Events ingress in this sequence. Complete "Slack OAuth callback
-deployment" above first and export `SLACK_OAUTH_CALLBACK_URL`.
+The dev Events path is deployed. For later agents or image revisions, push with
+explicit authorization, pin the real digest as `events_image_uri`, configure
+the exact `slack_agents` map, and review the plan. Accept only two Lambdas,
+per-agent POST routes, FIFO queue plus DLQ, PAY_PER_REQUEST state table, exact
+SSM/KMS paths, and exact Harness ARNs.
 
 1. **Bootstrap, once:** an authorized workspace owner supplies one configuration
    token plus refresh token for `/agent-core/slack/provisioner/config`. The
@@ -403,7 +360,7 @@ deployment" above first and export `SLACK_OAUTH_CALLBACK_URL`.
 2. **Merge reconciliation:** after an agent change is accepted on `main`, the
    standing authorization covers only `apps.manifest.create`/update and writes
    to the exact provisioner, binding, and credentials SSM paths. Validate and
-   render the manifest with `--redirect-uri "$SLACK_OAUTH_CALLBACK_URL"`, then
+   render the manifest with both platform URLs, then
    create once or update the Slack App ID in the binding. `metadata.name` is
    immutable after binding creation; its path and workspace are the identity.
    `spec.interfaces.slack.name` is mutable display intent and must never be
@@ -412,7 +369,7 @@ deployment" above first and export `SLACK_OAUTH_CALLBACK_URL`.
 3. **External approval:** each newly created Slack app still requires a human
    workspace installation approval. Generate a signed install link with
    `clients/slack/reconcile.py install-url --redirect-uri
-   "$SLACK_OAUTH_CALLBACK_URL"` (it performs no Slack or SSM write, so it is
+   "$SLACK_OAUTH_CALLBACK_URL" --events-url "$SLACK_EVENTS_URL"` (it performs no Slack or SSM write, so it is
    safe to re-run if the previous link's 10-minute state expired), and send it
    to the approving workspace member. Record the App ID, workspace ID,
    installer, manifest digest, and UTC time — never the state token or code.
@@ -425,19 +382,11 @@ deployment" above first and export `SLACK_OAUTH_CALLBACK_URL`.
    complete-oauth --redirect-uri "$SLACK_OAUTH_CALLBACK_URL"` remains
    available as a manual fallback for one exact `code`, read from an
    environment variable and never pasted into chat or logs.
-4. **External app token:** a human creates one per-app `connections:write`
-   token for Socket Mode. Store it only in that agent credentials parameter.
-   Neither a merge nor the provisioner token approves installation or creates
-   this token.
-5. **Manual process start:** the macOS operator invokes the selected agent
-   launcher with the same `--redirect-uri "$SLACK_OAUTH_CALLBACK_URL"` used
-   above (it recomputes the manifest digest to confirm the binding matches),
-   which replaces itself with the adapter. Load its binding and credentials
-   only into the process environment; do not load the provisioner value. The
-   bot token must authenticate to the exact `SLACK_WORKSPACE_ID`; every event
-   must carry the exact non-secret `SLACK_APP_ID`.
-6. **User validation and live invocation:** only after the preceding external
-   approvals and manual process start, obtain explicit authorization to run the
+4. **Events cutover:** apply infrastructure first; export the exact per-agent
+   `events_url`; then reconcile the Slack manifest. Successful reconciliation
+   removes the legacy Socket Mode app token from SSM.
+5. **User validation and live invocation:** only after infrastructure and Slack
+   reconciliation, obtain explicit authorization to run the
    chat-only DM/mention proof. Record UTC time and redacted request IDs; do not
    log raw events, messages, identities, or tokens. This is neither Terraform
    plan/apply evidence nor GitHub-tool proof.
@@ -459,6 +408,7 @@ Plan merged agent intent without Slack mutation or SSM writes:
   --spec agents/github-assistant/agent.yaml \
   --workspace-id "$SLACK_WORKSPACE_ID" \
   --redirect-uri "$SLACK_OAUTH_CALLBACK_URL" \
+  --events-url "$SLACK_EVENTS_URL" \
   --region "$AWS_REGION" \
   --profile "$AWS_PROFILE"
 ```
@@ -476,14 +426,14 @@ or SSM write; safe to re-run if the previous state expired):
   --spec agents/github-assistant/agent.yaml \
   --workspace-id "$SLACK_WORKSPACE_ID" \
   --redirect-uri "$SLACK_OAUTH_CALLBACK_URL" \
+  --events-url "$SLACK_EVENTS_URL" \
   --region "$AWS_REGION" \
   --profile "$AWS_PROFILE"
 ```
 
 With `platform/slack-oauth-callback` deployed, that link's approval flow
 completes installation automatically; `complete-oauth` below is only the
-manual fallback. Keep approval codes and app tokens out of command arguments
-and shell history — read them silently into temporary environment variables:
+manual fallback. Keep approval codes out of command arguments and shell history:
 
 ```shell
 read -s SLACK_OAUTH_CODE
@@ -496,27 +446,6 @@ export SLACK_OAUTH_CODE
   --profile "$AWS_PROFILE" \
   --oauth-code-env SLACK_OAUTH_CODE
 unset SLACK_OAUTH_CODE
-
-read -s SLACK_SOCKET_APP_TOKEN
-export SLACK_SOCKET_APP_TOKEN
-.venv/bin/python clients/slack/reconcile.py set-app-token \
-  --spec agents/github-assistant/agent.yaml \
-  --workspace-id "$SLACK_WORKSPACE_ID" \
-  --region "$AWS_REGION" \
-  --profile "$AWS_PROFILE" \
-  --app-token-env SLACK_SOCKET_APP_TOKEN
-unset SLACK_SOCKET_APP_TOKEN
-```
-
-Start one fully provisioned adapter manually from the local `main` ref:
-
-```shell
-.venv/bin/python clients/slack/launcher.py \
-  --agent github-assistant \
-  --region "$AWS_REGION" \
-  --profile "$AWS_PROFILE" \
-  --redirect-uri "$SLACK_OAUTH_CALLBACK_URL" \
-  --harness-arn "$(cd live/dev/us-east-1/agents/github-assistant && mise exec -- terragrunt output -raw harness_arn)"
 ```
 
 ## GitHub smoke tests

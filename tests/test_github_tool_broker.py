@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import base64
+from pathlib import Path
+import sys
 import unittest
 
-from services.github_tool.broker import BrokerConfig, BrokerError, GitHubBroker
-from services.github_tool.handler import gateway_tool_name
+
+CONTAINER_SERVICE_ROOT = Path(__file__).parents[1] / "containers" / "github-tool" / "service"
+sys.path.insert(0, str(CONTAINER_SERVICE_ROOT))
+
+from github_tool.broker import BrokerConfig, BrokerError, GitHubBroker
+from github_tool.handler import gateway_tool_name
 
 
 class FakeSecrets:

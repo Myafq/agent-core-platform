@@ -1,6 +1,6 @@
 """Signed, expiring Slack OAuth installation state.
 
-The public callback (`services/slack_oauth_callback`) must bind an inbound
+The public callback (`containers/slack-oauth-callback/service/slack_oauth_callback`) must bind an inbound
 `code` to the exact agent, workspace, Slack App, and redirect URI that started
 the installation, without a server-side session store. `sign_state` and
 `verify_state` are the single source of truth for that binding; both the
