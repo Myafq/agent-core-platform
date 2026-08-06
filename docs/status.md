@@ -225,6 +225,10 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   updates and the moved modules import successfully. The final IAM apply changed
   one inline policy in place, with no additions or destroys; the post-apply
   Terraform plan has no drift. A fresh live Slack event remains the E2E gate.
+- The Slack Events worker now sets Slack's native thread working status before
+  Harness invocation. It uses the existing `chat:write` scope, auto-clears when
+  the reply posts, and degrades safely if the status API is unavailable. This
+  source change is not built, deployed, or live-verified.
 - `SLACK-004` is deployed: the temporary
   `https://localhost/slack/oauth/callback` workflow is fully removed from
   source and docs and replaced with `containers/slack-oauth-callback`, a
@@ -240,7 +244,7 @@ legacy state until separate, explicitly authorized destroy plans are reviewed.
   expired/tampered state, workspace/App/bot-token mismatches, exact
   `redirect_uri` equality, canonical SSM paths and `SecureString` writes, and
   that a duplicate/replayed callback cannot corrupt a completed installation.
-  Current validation passes all 160 repository unit tests. The authorized
+  Current validation passes all 130 repository unit tests. The authorized
   2026-08-04 apply created exactly 10 resources, 0 changed, and 0 destroyed.
   Read-only verification found the digest-pinned `arm64` image Lambda `Active`
   with `LastUpdateStatus: Successful`, API Gateway route exactly

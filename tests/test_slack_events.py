@@ -21,7 +21,7 @@ from slack_events.core import (
     verify_slack_signature,
 )
 from slack_events.ingress import SqsFifoDispatcher
-from slack_events.worker import DynamoSlackState
+from slack_events.worker import DynamoSlackState, UrllibSlackPoster
 
 
 NOW = 1_700_000_000
@@ -73,6 +73,13 @@ class FakeHarness:
 class FakePoster:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str, str]] = []
+        self.status_calls: list[tuple[str, str, str, str]] = []
+        self.reject_status = False
+
+    def set_status(self, bot_token: str, channel_id: str, thread_ts: str, status: str) -> None:
+        self.status_calls.append((bot_token, channel_id, thread_ts, status))
+        if self.reject_status:
+            raise RuntimeError("slack_rejected")
 
     def post(self, bot_token: str, channel_id: str, thread_ts: str, text: str) -> None:
         self.calls.append((bot_token, channel_id, thread_ts, text))
@@ -206,6 +213,46 @@ class SlackEventsWorkerTests(unittest.TestCase):
         self.process(self.envelope(event_id="Ev2", event={"text": "<@U1> next"}))
         self.assertEqual(self.poster.calls[0][-1], "Started a fresh session.")
         self.assertTrue(self.harness.calls[0][1].startswith("session-"))
+
+    def test_sets_native_thread_status_while_harness_runs(self) -> None:
+        self.process(self.envelope())
+        self.assertEqual(
+            self.poster.status_calls,
+            [("xoxb-secret", "C1", "100.1", "is working on your request...")],
+        )
+
+    def test_status_failure_does_not_interrupt_the_harness_response(self) -> None:
+        self.poster.reject_status = True
+        self.process(self.envelope())
+        self.assertEqual(self.harness.calls[0][-1], "hello")
+        self.assertEqual(self.poster.calls[0][-1], "Harness reply")
+
+    def test_commands_do_not_set_a_working_status(self) -> None:
+        self.process(self.envelope(event={"text": "<@U1> /new"}))
+        self.assertEqual(self.poster.status_calls, [])
+
+
+class SlackWebApiTests(unittest.TestCase):
+    def test_native_status_uses_the_thread_status_endpoint(self) -> None:
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return b'{"ok":true}'
+
+        with patch("slack_events.worker.urllib.request.urlopen", return_value=Response()) as urlopen:
+            UrllibSlackPoster().set_status("xoxb-secret", "C1", "100.1", "is working on your request...")
+
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "https://slack.com/api/assistant.threads.setStatus")
+        self.assertEqual(
+            json.loads(request.data),
+            {"channel_id": "C1", "thread_ts": "100.1", "status": "is working on your request..."},
+        )
 
 
 class FifoDispatchTests(unittest.TestCase):

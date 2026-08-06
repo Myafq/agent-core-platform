@@ -149,11 +149,21 @@ class BotoHarnessInvoker(HarnessInvoker):
 
 
 class UrllibSlackPoster(SlackPoster):
-    endpoint = "https://slack.com/api/chat.postMessage"
+    post_endpoint = "https://slack.com/api/chat.postMessage"
+    status_endpoint = "https://slack.com/api/assistant.threads.setStatus"
+
+    def set_status(self, bot_token: str, channel_id: str, thread_ts: str, status: str) -> None:
+        self._call(
+            self.status_endpoint,
+            bot_token,
+            {"channel_id": channel_id, "thread_ts": thread_ts, "status": status},
+        )
 
     def post(self, bot_token: str, channel_id: str, thread_ts: str, text: str) -> None:
         for offset in range(0, len(text) or 1, SLACK_MESSAGE_LIMIT):
-            body = json.dumps(
+            self._call(
+                self.post_endpoint,
+                bot_token,
                 {
                     "channel": channel_id,
                     "thread_ts": thread_ts,
@@ -162,21 +172,23 @@ class UrllibSlackPoster(SlackPoster):
                     "unfurl_links": False,
                     "unfurl_media": False,
                 },
-                separators=(",", ":"),
-            ).encode("utf-8")
-            request = urllib.request.Request(
-                self.endpoint,
-                data=body,
-                method="POST",
-                headers={"Authorization": f"Bearer {bot_token}", "Content-Type": "application/json; charset=utf-8"},
             )
-            try:
-                with urllib.request.urlopen(request, timeout=10) as response:
-                    payload = json.loads(response.read())
-            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
-                raise RuntimeError("slack_unavailable") from error
-            if not isinstance(payload, dict) or payload.get("ok") is not True:
-                raise RuntimeError("slack_rejected")
+
+    @staticmethod
+    def _call(endpoint: str, bot_token: str, payload: Mapping[str, Any]) -> None:
+        request = urllib.request.Request(
+            endpoint,
+            data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+            method="POST",
+            headers={"Authorization": f"Bearer {bot_token}", "Content-Type": "application/json; charset=utf-8"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                response_payload = json.loads(response.read())
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+            raise RuntimeError("slack_unavailable") from error
+        if not isinstance(response_payload, dict) or response_payload.get("ok") is not True:
+            raise RuntimeError("slack_rejected")
 
 
 def _harnesses_from_environment() -> dict[str, str]:

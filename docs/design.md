@@ -160,6 +160,11 @@ active-session keys with event TTLs. Durable session overrides preserve `/new`
 across Lambda invocations. DMs start sessions directly; channel replies are
 accepted only for roots opened by `app_mention`.
 
+Before invoking Harness, the worker sets Slack's native thread status through
+`assistant.threads.setStatus` using the existing `chat:write` scope. Slack
+clears it when the threaded reply is posted. Status failures are best-effort
+and never block Harness invocation or message delivery.
+
 The OAuth callback remains a separate Lambda and IAM role on
 `GET /slack/oauth/callback`. Its compact signed state binds agent, workspace,
 App, redirect URI, and expiry before code exchange or SSM writes. OAuth and

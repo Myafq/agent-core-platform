@@ -27,6 +27,7 @@ from clients.channel.core import (
 DEFAULT_PARAMETER_PREFIX = "/agent-core/slack/agents"
 SIGNATURE_VERSION = "v0"
 REPLAY_WINDOW_SECONDS = 300
+WORKING_STATUS = "is working on your request..."
 _AGENT_NAME = re.compile(r"^[a-z][a-z0-9-]{0,38}[a-z0-9]$")
 _APP_ID = re.compile(r"^A[A-Z0-9]+$")
 _WORKSPACE_ID = re.compile(r"^T[A-Z0-9]+$")
@@ -69,6 +70,8 @@ class HarnessInvoker(Protocol):
 
 
 class SlackPoster(Protocol):
+    def set_status(self, bot_token: str, channel_id: str, thread_ts: str, status: str) -> None: ...
+
     def post(self, bot_token: str, channel_id: str, thread_ts: str, text: str) -> None: ...
 
 
@@ -328,15 +331,18 @@ class SlackWorker:
         tenant_id = f"{workspace_id}:{app_id}"
         if not self.state.claim_event(tenant_id, event_id):
             return
+        message: WorkerMessage | None = None
         try:
             bot_user_id = envelope.get("bot_user_id")
             message = self._message(event, workspace_id, app_id, bot_user_id if isinstance(bot_user_id, str) else None)
             if message is not None:
-                reply = self._reply(message, tenant_id, harness_arn)
+                reply = self._reply(message, tenant_id, harness_arn, bot_token)
                 if reply is not None:
                     self.poster.post(bot_token, message.channel_id, message.thread_ts, reply)
             self.state.complete_event(tenant_id, event_id)
         except Exception:
+            if message is not None:
+                self._set_status(bot_token, message, "")
             self.state.release_event(tenant_id, event_id)
             raise
 
@@ -370,7 +376,7 @@ class SlackWorker:
             return None
         return WorkerMessage(workspace_id, app_id, user_id, channel_id, message_ts, thread_ts, normalized_text)
 
-    def _reply(self, message: "WorkerMessage", tenant_id: str, harness_arn: str) -> str | None:
+    def _reply(self, message: "WorkerMessage", tenant_id: str, harness_arn: str, bot_token: str) -> str | None:
         channel_message = ChannelMessage(
             "slack", tenant_id, message.user_id, f"{message.channel_id}:{message.thread_ts}", message.message_id, message.text
         )
@@ -381,6 +387,7 @@ class SlackWorker:
             self.state.set_active_session(tenant_id, channel_message.conversation_id, f"session-{state_hash(message.message_id)}")
             return NEW_SESSION_TEXT
         active_session = self.state.get_active_session(tenant_id, channel_message.conversation_id) or session_id(channel_message.as_dict())
+        self._set_status(bot_token, message, WORKING_STATUS)
         try:
             reply = self.harness.invoke(
                 harness_arn, active_session, runtime_user_id(channel_message.as_dict()), channel_message.text
@@ -388,6 +395,12 @@ class SlackWorker:
         except (HarnessStreamError, RuntimeError, ValueError):
             return SAFE_FAILURE_TEXT
         return reply or EMPTY_RESPONSE_TEXT
+
+    def _set_status(self, bot_token: str, message: "WorkerMessage", status: str) -> None:
+        try:
+            self.poster.set_status(bot_token, message.channel_id, message.thread_ts, status)
+        except RuntimeError:
+            pass
 
 
 @dataclass(frozen=True)
